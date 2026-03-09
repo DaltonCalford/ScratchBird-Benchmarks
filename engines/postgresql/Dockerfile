@@ -1,34 +1,68 @@
-# PostgreSQL Benchmark Container
-# Uses official PostgreSQL 18 image with benchmark schema pre-loaded
+# PostgreSQL 16 for ScratchBird Benchmarks
+# Optimized for testing with benchmark database pre-configured
 
-FROM postgres:18.0
+FROM ubuntu:22.04
 
 LABEL maintainer="ScratchBird Benchmarks"
-LABEL description="PostgreSQL 18.0 for comparative benchmarking"
+LABEL description="PostgreSQL 16 benchmark engine"
 
-# Install additional tools for benchmarking
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+
+# PostgreSQL version
+ENV PG_VERSION=16
+ENV PG_MAJOR=16
+ENV PG_USER=benchmark
+ENV PG_PASSWORD=benchmark
+ENV PG_DATABASE=benchmark
+
+# Install dependencies
 RUN apt-get update && apt-get install -y \
+    wget \
     curl \
-    jq \
-    procps \
-    sysstat \
+    gnupg2 \
+    lsb-release \
+    locales \
     && rm -rf /var/lib/apt/lists/*
 
-# Environment variables
-ENV POSTGRES_USER=benchmark
-ENV POSTGRES_PASSWORD=benchmark
-ENV POSTGRES_DB=benchmark
+# Add PostgreSQL APT repository
+RUN echo "deb http://apt.postgresql.org/pub/repos/apt/ $(lsb_release -cs)-pgdg main" > /etc/apt/sources.list.d/pgdg.list \
+    && wget --quiet -O - https://www.postgresql.org/media/keys/ACCC4CF8.asc | apt-key add -
 
-# Copy configuration and init scripts
-COPY config/postgresql.conf /etc/postgresql/postgresql.conf
-COPY init/ /docker-entrypoint-initdb.d/
+# Install PostgreSQL
+RUN apt-get update && apt-get install -y \
+    postgresql-${PG_MAJOR} \
+    postgresql-client-${PG_MAJOR} \
+    postgresql-contrib-${PG_MAJOR} \
+    && rm -rf /var/lib/apt/lists/*
 
-# Version tracking script
-COPY scripts/collect-version.sh /usr/local/bin/
+# Set locale
+RUN locale-gen en_US.UTF-8
+ENV LANG=en_US.UTF-8
+ENV LANGUAGE=en_US:en
+ENV LC_ALL=en_US.UTF-8
+
+# PostgreSQL directories
+ENV PGDATA=/var/lib/postgresql/data
+RUN mkdir -p ${PGDATA} /var/run/postgresql \
+    && chown -R postgres:postgres ${PGDATA} /var/run/postgresql
+
+# Copy configuration
+COPY postgresql.conf /etc/postgresql/${PG_MAJOR}/main/postgresql.conf
+COPY pg_hba.conf /etc/postgresql/${PG_MAJOR}/main/pg_hba.conf
+COPY collect-version.sh /usr/local/bin/collect-version.sh
 RUN chmod +x /usr/local/bin/collect-version.sh
 
+# Copy entrypoint script
+COPY docker-entrypoint.sh /usr/local/bin/
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+# Expose PostgreSQL port
 EXPOSE 5432
 
 # Health check
-HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=3 \
-    CMD /usr/local/bin/collect-version.sh > /dev/null 2>&1 || exit 1
+HEALTHCHECK --interval=5s --timeout=3s --start-period=10s --retries=5 \
+    CMD /usr/local/bin/collect-version.sh
+
+ENTRYPOINT ["docker-entrypoint.sh"]
+CMD ["postgres"]
