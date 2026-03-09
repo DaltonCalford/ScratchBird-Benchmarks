@@ -25,18 +25,16 @@ COMMIT;
 EOF
 fi
 
-# Get version using a simpler approach
-VERSION_OUTPUT=$($FIREBIRD_HOME/bin/isql -user benchmark -password benchmark "/firebird/data/${FIREBIRD_DATABASE}" <<EOF 2>/dev/null
-SELECT rdb\$get_context('SYSTEM', 'ENGINE_VERSION') FROM rdb\$database;
-EOF
-)
+# Get version - use single quotes for string literals (not double quotes)
+VERSION_OUTPUT=$(echo "SELECT rdb\$get_context('SYSTEM', 'ENGINE_VERSION') FROM rdb\$database;" | \
+    $FIREBIRD_HOME/bin/isql /firebird/data/${FIREBIRD_DATABASE} -q 2>/dev/null)
 
-# Extract version number from output
+# Extract version number from output (format: "    RDB_GET_CONTEXT\n============\n5.0.1")
 VERSION=$(echo "$VERSION_OUTPUT" | grep -E '^[0-9]+\.[0-9]+' | head -1 | tr -d '[:space:]')
 
 # If that didn't work, try alternative method
 if [ -z "$VERSION" ]; then
-    # Try getting version from gstat or fbserver
+    # Try getting version from server binary
     if [ -f "$FIREBIRD_HOME/bin/fbserver" ]; then
         VERSION=$($FIREBIRD_HOME/bin/fbserver -z 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
     elif [ -f "$FIREBIRD_HOME/bin/fb_smp_server" ]; then
