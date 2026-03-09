@@ -66,17 +66,38 @@ docker-compose ps
 # Results saved to: ./results/full-test-suite-{timestamp}/
 ```
 
-### Run with Result Submission
+### Generate Human-Readable Reports
 
 ```bash
-# Submit results to project server (anonymous)
-SUBMIT=true ./run-all-tests.sh all all
+# Format a single result as text report
+python3 system-info/submit/result_formatter.py --benchmark results/acid-firebird-20240308.json
 
-# With tags for categorization
-SUBMIT=true TAGS="production,aws,r5.xlarge" ./run-all-tests.sh all all
+# Include system information
+python3 system-info/submit/result_formatter.py --benchmark results/test.json --system-info system-info.json
 
-# Authenticated submission
-SUBMIT=true API_KEY=your_api_key ./run-all-tests.sh all all
+# Compare multiple results
+python3 system-info/submit/result_formatter.py --compare results/*.json
+
+# Interactive mode (prompts for options)
+python3 system-info/submit/result_formatter.py
+```
+
+### Submit Results to GitHub
+
+Share benchmark results by creating human-readable reports and posting them to GitHub:
+
+```bash
+# 1. Run tests
+./run-all-tests.sh all all
+
+# 2. Generate formatted report
+python3 system-info/submit/result_formatter.py --benchmark results/acid-firebird-*.json
+
+# 3. View the generated report
+cat benchmark_report_firebird_acid_20240308_120000.txt
+
+# 4. Copy contents and paste into GitHub issue or discussion
+#    at https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues
 ```
 
 ## Project Structure
@@ -177,11 +198,11 @@ ScratchBird-Benchmarks/
 │   └── scripts/
 │       └── run-differential-tests.sh
 │
-└── system-info/                        # NEW: System collection & submission
+└── system-info/                        # NEW: System collection & report generation
     ├── collectors/
     │   └── system_info.py             # Hardware/OS detection
     ├── submit/
-    │   └── result_submitter.py        # Result upload to server
+    │   └── result_formatter.py        # Generate human-readable reports
     └── README.md
 ```
 
@@ -282,11 +303,12 @@ Automatically collects:
 # Collect system info
 python3 system-info/collectors/system_info.py --output system.json
 
-# Submit results
-python3 system-info/submit/result_submitter.py \
+# Generate text report
+python3 system-info/submit/result_formatter.py \
   --benchmark results/test.json \
   --system-info system.json \
-  --tags production,aws
+  --tags production,aws \
+  --output reports/
 ```
 
 ## Usage Examples
@@ -385,7 +407,7 @@ If ScratchBird shows these patterns, emulation needs work:
 ### GitHub Actions
 
 ```yaml
-name: Benchmark & Submit
+name: Benchmark & Report
 on: [push, pull_request]
 
 jobs:
@@ -400,15 +422,21 @@ jobs:
       - name: Run benchmarks
         run: ./run-all-tests.sh all all
         env:
-          SUBMIT: true
-          API_KEY: ${{ secrets.SCRATCHBIRD_API_KEY }}
           TAGS: "ci,github-actions,${{ matrix.os }}"
       
-      - name: Upload artifacts
+      - name: Generate text report
+        run: |
+          python3 system-info/submit/result_formatter.py \
+            --benchmark results/*.json \
+            --output reports/
+      
+      - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: benchmark-results
-          path: results/
+          path: |
+            results/
+            reports/
 ```
 
 ### GitLab CI
@@ -418,13 +446,13 @@ benchmark:
   script:
     - docker-compose up -d firebird mysql postgresql
     - ./run-all-tests.sh all all
+    - python3 system-info/submit/result_formatter.py --compare results/*.json --output reports/
   variables:
-    SUBMIT: "true"
-    API_KEY: $SCRATCHBIRD_API_KEY
     TAGS: "ci,gitlab,production"
   artifacts:
     paths:
       - results/
+      - reports/
 ```
 
 ## Architecture
@@ -484,7 +512,7 @@ Initial Developer's Public License Version 1.0 (IDPL) - Same as ScratchBird
 
 - **Repository**: https://github.com/DaltonCalford/ScratchBird-Benchmarks
 - **ScratchBird Project**: [Link when available]
-- **Test Results Dashboard**: https://benchmarks.scratchbird.io
+- **GitHub Issues**: https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues (post results here)
 - **Issue Tracker**: https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues
 
 ## Contact

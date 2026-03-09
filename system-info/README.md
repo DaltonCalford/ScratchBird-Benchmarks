@@ -1,13 +1,13 @@
-# System Information Collection & Result Submission
+# System Information Collection & Report Generation
 
-Collects comprehensive system information and submits benchmark results to the ScratchBird project.
+Collects comprehensive system information and generates human-readable benchmark reports.
 
 ## Overview
 
 This module provides:
 - **System Information Collection** - Hardware, OS, and environment details
-- **Result Submission** - Upload benchmark results to project server
-- **Offline Mode** - Save results locally for later submission
+- **Report Generation** - Format benchmark results as readable text files
+- **GitHub-Ready Output** - Easy to post to GitHub issues/discussions
 
 ## System Information Collected
 
@@ -42,46 +42,65 @@ python3 system-info/collectors/system_info.py --output my-system.json
 python3 system-info/collectors/system_info.py --quiet
 ```
 
-### Submit Benchmark Results
+### Generate Text Reports
 
 ```bash
 # Interactive mode
-python3 system-info/submit/result_submitter.py
+python3 system-info/submit/result_formatter.py
 
-# Submit specific result
-python3 system-info/submit/result_submitter.py \
+# Format a single result
+python3 system-info/submit/result_formatter.py \
   --benchmark results/stress-mysql-20240308.json \
   --system-info system-info.json \
   --tags production,aws \
   --notes "Initial benchmark run"
 
-# Anonymous submission (default)
-python3 system-info/submit/result_submitter.py \
-  --benchmark results/*.json \
-  --anonymous
+# Compare multiple results
+python3 system-info/submit/result_formatter.py \
+  --compare results/*.json \
+  --system-info system-info.json
 
-# Authenticated submission
-python3 system-info/submit/result_submitter.py \
-  --benchmark results/*.json \
-  --api-key YOUR_API_KEY \
-  --identified
+# Print to stdout instead of saving
+python3 system-info/submit/result_formatter.py \
+  --benchmark results/test.json \
+  --stdout
 ```
 
 ### Integrated with Test Runner
 
 ```bash
-# Run tests with system info collection and submission
-SUBMIT=true ./run-all-tests.sh all all
+# Run tests with system info collection and report generation
+REPORT=true ./run-all-tests.sh all all
 
 # With tags and notes
-SUBMIT=true TAGS="production,aws,r5.xlarge" NOTES="First run on new instance" \
+REPORT=true TAGS="production,aws,r5.xlarge" NOTES="First run on new instance" \
   ./run-all-tests.sh stress mysql
 
-# With API key for authenticated submission
-SUBMIT=true API_KEY=sb_api_xxx ./run-all-tests.sh all all
+# Results saved to: results/full-test-suite-*/reports/
 ```
 
-## Output Format
+## Submitting to GitHub
+
+Benchmark results can be shared by posting to GitHub issues or discussions:
+
+```bash
+# 1. Run benchmarks
+./run-all-tests.sh all all
+
+# 2. Generate formatted report
+python3 system-info/submit/result_formatter.py \
+  --benchmark results/acid-firebird-*.json \
+  --system-info system-info.json \
+  --notes "First test run"
+
+# 3. View the report
+cat benchmark_report_firebird_acid_20240308_120000.txt
+
+# 4. Copy contents to clipboard and paste into GitHub:
+#    https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues
+```
+
+## Output Formats
 
 ### System Info JSON
 
@@ -175,53 +194,62 @@ SUBMIT=true API_KEY=sb_api_xxx ./run-all-tests.sh all all
 }
 ```
 
-## Offline Mode
+### Text Report Example
 
-If you're running benchmarks offline or submission fails:
-
-```bash
-# Save for later submission
-python3 system-info/submit/result_submitter.py \
-  --benchmark results/test.json \
-  --save-for-later
-
-# Submit all pending results when online
-python3 system-info/submit/result_submitter.py --submit-pending
 ```
+======================================================================
+SCRATCHBIRD BENCHMARK REPORT
+======================================================================
 
-Pending submissions are saved to `./pending-submissions/` by default.
+BENCHMARK METADATA
+----------------------------------------------------------------------
+Engine Tested:      firebird
+Test Suite:         acid
+Timestamp:          2024-03-08T12:00:00
+Tags:               production,aws
+Notes:              First test run
 
-## API Endpoints
+SYSTEM INFORMATION
+----------------------------------------------------------------------
+CPU:                Intel(R) Core(TM) i9-12900K
+  Vendor:           GenuineIntel
+  Physical Cores:   16
+  Logical Cores:    24
+  Frequency:        3200.0 MHz (base)
+  Virtualization:   VMX capable
 
-### Submit Results
-```http
-POST https://benchmarks.scratchbird.io/api/v1/submit
-Content-Type: application/json
-X-API-Key: your_api_key (optional)
+Memory:             64.0 GB total
+  Type:             DDR5 @ 4800 MHz
+  Used:             26.6%
 
-{
-  "submission_version": "1.0",
-  "submission_time": "2024-03-08T14:30:22",
-  "anonymous": true,
-  "client_info": { ... },
-  "benchmark_results": { ... },
-  "system_info": { ... },
-  "metadata": {
-    "tags": ["production", "aws"],
-    "notes": "Initial run",
-    "result_fingerprint": "a1b2c3d4"
-  }
-}
-```
+Operating System:   Ubuntu 22.04.3 LTS
+  Version:          22.04
+  Kernel:           5.15.0-92-generic
+  Architecture:     x86_64
 
-### Response
-```json
-{
-  "success": true,
-  "submission_id": "sb-sub-12345678",
-  "message": "Submission successful",
-  "view_url": "https://benchmarks.scratchbird.io/r/sb-sub-12345678"
-}
+Storage:
+  /dev/nvme0n1:
+    Type:           NVMe SSD
+    Filesystem:     ext4
+    Total:          2048.0 GB
+    Free:           1591.7 GB (77.7%)
+
+Environment:        Bare metal
+
+TEST RESULTS
+----------------------------------------------------------------------
+Total Tests:        20
+Passed:             20
+Failed:             0
+Errors:             0
+Score:              100
+
+======================================================================
+END OF REPORT
+======================================================================
+
+This report was generated by ScratchBird Benchmark Suite.
+To submit: Copy this content to a GitHub issue or discussion.
 ```
 
 ## Privacy
@@ -239,10 +267,10 @@ X-API-Key: your_api_key (optional)
 - File contents
 - Network traffic data
 
-### Anonymous Submission
-By default, submissions are anonymous. No user identification is stored unless you:
-- Provide an API key with `--identified`
-- Include identifying information in tags/notes
+### Sharing Reports
+- Reports are plain text - easy to review before sharing
+- No automatic uploads or external servers
+- You control what gets shared and where
 
 ## Requirements
 
@@ -279,11 +307,10 @@ If certain details are missing:
 - Install `lspci` for GPU detection
 - Run as root for complete container detection
 
-### Submission Fails
-1. Check internet connectivity
-2. Verify API key if using authenticated submission
-3. Save for later: `--save-for-later`
-4. Retry with `--submit-pending`
+### Report Generation Fails
+1. Check that benchmark JSON files exist
+2. Verify system-info.json is present (optional but recommended)
+3. Check file permissions on output directory
 
 ## CI/CD Integration
 
@@ -291,17 +318,20 @@ If certain details are missing:
 ```yaml
 - name: Run benchmarks
   run: ./run-all-tests.sh all all
-  env:
-    SUBMIT: true
-    API_KEY: ${{ secrets.SCRATCHBIRD_API_KEY }}
-    TAGS: "ci,github-actions,${{ matrix.os }}"
 
-- name: Upload results on failure
-  if: failure()
+- name: Generate reports
+  run: |
+    python3 system-info/submit/result_formatter.py \
+      --compare results/**/*.json \
+      --output reports/
+
+- name: Upload results
   uses: actions/upload-artifact@v4
   with:
     name: benchmark-results
-    path: results/
+    path: |
+      results/
+      reports/
 ```
 
 ### GitLab CI
@@ -309,10 +339,11 @@ If certain details are missing:
 benchmark:
   script:
     - ./run-all-tests.sh all all
-  variables:
-    SUBMIT: "true"
-    API_KEY: $SCRATCHBIRD_API_KEY
-    TAGS: "ci,gitlab,production"
+    - python3 system-info/submit/result_formatter.py --compare results/*.json
+  artifacts:
+    paths:
+      - results/
+      - reports/
 ```
 
 ## License

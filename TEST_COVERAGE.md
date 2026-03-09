@@ -47,9 +47,9 @@ All requested test suites have been implemented and committed to the repository.
 
 | Component | Status | Files | Description |
 |-----------|--------|-------|-------------|
-| **system-info** | ✅ Complete | `system-info/` | Hardware/OS collection & result submission |
+| **system-info** | ✅ Complete | `system-info/` | Hardware/OS collection & report generation |
 | **collector** | ✅ Complete | `collectors/system_info.py` | CPU, GPU, RAM, disk, OS detection |
-| **submitter** | ✅ Complete | `submit/result_submitter.py` | Result upload to project server |
+| **formatter** | ✅ Complete | `submit/result_formatter.py` | Human-readable text reports |
 
 ## Repository Structure
 
@@ -154,11 +154,11 @@ ScratchBird-Benchmarks/
     ├── collectors/
     │   └── system_info.py              # Hardware/OS collection
     ├── submit/
-    │   └── result_submitter.py         # Result submission
+    │   └── result_formatter.py         # Text report generation
     └── README.md
 ```
 
-## System Information & Submission (NEW)
+## System Information & Report Generation (NEW)
 
 ### Collected System Information
 
@@ -172,13 +172,13 @@ ScratchBird-Benchmarks/
 | **Container** | Docker/Podman/K8s detection, cgroup limits |
 | **Network** | Hostname, IP, MAC address |
 
-### Submission Features
+### Report Generation Features
 
-- **Anonymous submission** (default) - No user identification
-- **Authenticated submission** - API key for identified submissions
-- **Offline mode** - Save for later when connection available
-- **Compression** - Large results automatically compressed
-- **Validation** - Results validated before submission
+- **Human-readable text** - Easy to review and share
+- **System context** - Includes hardware/OS information
+- **GitHub-ready** - Copy-paste into issues/discussions
+- **Comparison mode** - Compare multiple results side-by-side
+- **Tags and notes** - Categorize and annotate reports
 
 ## Usage
 
@@ -188,20 +188,17 @@ ScratchBird-Benchmarks/
 ./run-all-tests.sh all all
 ```
 
-### Run with Result Submission
+### Run with Report Generation
 
 ```bash
-# Submit anonymously
-SUBMIT=true ./run-all-tests.sh all all
+# Generate text report after tests
+REPORT=true ./run-all-tests.sh all all
 
-# Submit with tags
-SUBMIT=true TAGS="production,aws,r5.xlarge" ./run-all-tests.sh stress mysql
-
-# Authenticated submission
-SUBMIT=true API_KEY=sb_api_xxx ./run-all-tests.sh all all
+# With tags
+REPORT=true TAGS="production,aws,r5.xlarge" ./run-all-tests.sh stress mysql
 
 # With notes
-SUBMIT=true NOTES="Initial benchmark on new instance" ./run-all-tests.sh all all
+REPORT=true NOTES="Initial benchmark on new instance" ./run-all-tests.sh all all
 ```
 
 ### Collect System Info Only
@@ -210,26 +207,42 @@ SUBMIT=true NOTES="Initial benchmark on new instance" ./run-all-tests.sh all all
 python3 system-info/collectors/system_info.py --output my-system.json
 ```
 
-### Submit Manually
+### Generate Reports Manually
 
 ```bash
 # Interactive mode
-python3 system-info/submit/result_submitter.py
+python3 system-info/submit/result_formatter.py
 
-# Direct submission
-python3 system-info/submit/result_submitter.py \
+# Format single result
+python3 system-info/submit/result_formatter.py \
   --benchmark results/stress-mysql-20240308.json \
   --system-info system-info.json \
   --tags production,aws \
   --notes "First run"
 
-# Save for later (offline)
-python3 system-info/submit/result_submitter.py \
-  --benchmark results/test.json \
-  --save-for-later
+# Compare multiple results
+python3 system-info/submit/result_formatter.py \
+  --compare results/*.json \
+  --system-info system-info.json
 
-# Submit pending results
-python3 system-info/submit/result_submitter.py --submit-pending
+# Print to stdout
+python3 system-info/submit/result_formatter.py \
+  --benchmark results/test.json \
+  --stdout
+```
+
+### Submit to GitHub
+
+```bash
+# 1. Generate report
+python3 system-info/submit/result_formatter.py \
+  --benchmark results/acid-firebird-*.json
+
+# 2. View report
+cat benchmark_report_firebird_acid_*.txt
+
+# 3. Copy contents to GitHub issue:
+#    https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues
 ```
 
 ### Run Differential Tests
@@ -317,11 +330,11 @@ Tests that expose architectural differences:
 - Container/virtualization detection
 - Automatic correlation with benchmark results
 
-### 5. Result Submission
-- Submit to project server for aggregation
-- Anonymous or authenticated
-- Offline mode for air-gapped environments
-- Tagging and notes for categorization
+### 5. Report Generation
+- Human-readable text reports
+- Include system information for context
+- Easy to share via GitHub issues/discussions
+- Tags and notes for categorization
 
 ### 6. TPC-C Complete Implementation
 All 5 transaction types with proper weights:
@@ -373,7 +386,7 @@ All test suites output JSON:
 ## CI/CD Integration
 
 ```yaml
-name: Complete Test Suite with Submission
+name: Complete Test Suite with Report Generation
 on: [push, pull_request]
 
 jobs:
@@ -385,19 +398,25 @@ jobs:
       - name: Start engines
         run: docker-compose up -d firebird mysql postgresql
       
-      - name: Run all tests with submission
+      - name: Run all tests
         run: ./run-all-tests.sh all all
         env:
-          SUBMIT: true
-          API_KEY: ${{ secrets.SCRATCHBIRD_API_KEY }}
           TAGS: "ci,github-actions,${{ matrix.os }}"
           NOTES: "Automated CI run"
+      
+      - name: Generate text reports
+        run: |
+          python3 system-info/submit/result_formatter.py \
+            --compare results/**/*.json \
+            --output reports/
       
       - name: Upload results
         uses: actions/upload-artifact@v4
         with:
           name: test-results
-          path: results/
+          path: |
+            results/
+            reports/
       
       - name: Check scores
         run: |
@@ -441,4 +460,4 @@ https://github.com/DaltonCalford/ScratchBird-Benchmarks
 
 ---
 **Status**: All 15 components implemented and committed ✅
-**Latest Addition**: System Info Collection & Result Submission (Phase 5)
+**Latest Addition**: System Info Collection & Report Generation (Phase 5)

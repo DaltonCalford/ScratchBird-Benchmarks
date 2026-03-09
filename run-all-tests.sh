@@ -3,7 +3,7 @@
 # Master Test Orchestrator for ScratchBird Benchmarks
 #
 # Runs all test suites with system information collection
-# and optional result submission to project server.
+# and optional report generation.
 #
 # Usage: ./run-all-tests.sh [suite] [engine] [options]
 #   suite: all, regression, stress, acid, concurrency, data-type, ddl, 
@@ -21,8 +21,7 @@ mkdir -p "$RESULTS_DIR"
 
 SUITE="${1:-all}"
 ENGINE="${2:-all}"
-SUBMIT_RESULTS="${SUBMIT:-false}"
-API_KEY="${API_KEY:-}"
+GENERATE_REPORT="${REPORT:-false}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -64,16 +63,15 @@ Engines:
   firebird, mysql, postgresql, all
 
 Environment Variables:
-  SUBMIT=true      Submit results to project server
-  API_KEY=xxx      API key for authenticated submission
-  TAGS="tag1,tag2" Tags for result categorization
-  NOTES="notes"    Additional notes for submission
+  REPORT=true      Generate human-readable text report
+  TAGS="tag1,tag2" Tags for report categorization
+  NOTES="notes"    Additional notes for report
 
 Examples:
   $0 all all                    # Run everything
   $0 acid postgresql           # ACID tests for PostgreSQL
   $0 stress mysql              # Stress tests for MySQL
-  SUBMIT=true $0 tpc-c all     # Run TPC-C and submit results
+  REPORT=true $0 tpc-c all     # Run TPC-C and generate report
 
 EOF
 }
@@ -116,70 +114,72 @@ with open('$RESULTS_DIR/system-info.json') as f:
     fi
 }
 
-# Submit results if requested
-submit_results() {
-    if [ "$SUBMIT_RESULTS" != "true" ]; then
+# Generate text reports if requested
+generate_text_reports() {
+    if [ "$GENERATE_REPORT" != "true" ]; then
         return
     fi
     
-    log_section "Submitting Results to Project Server"
-    
-    if [ ! -f "$RESULTS_DIR/system-info.json" ]; then
-        log_warn "No system info available, cannot submit"
-        return
-    fi
+    log_section "Generating Text Reports"
     
     # Find all result files
     result_files=$(find "$RESULTS_DIR" -name "*.json" -not -name "system-info.json" 2>/dev/null)
     
     if [ -z "$result_files" ]; then
-        log_warn "No result files to submit"
+        log_warn "No result files to format"
         return
     fi
     
-    # Submit each result file
+    # Create reports directory
+    mkdir -p "$RESULTS_DIR/reports"
+    
+    # Generate reports for each result file
     for result_file in $result_files; do
-        log_info "Submitting: $(basename "$result_file")"
+        log_info "Formatting: $(basename "$result_file")"
         
-        submit_args="--benchmark $result_file --system-info $RESULTS_DIR/system-info.json"
+        format_args="--benchmark $result_file --output $RESULTS_DIR/reports"
         
-        if [ -n "$API_KEY" ]; then
-            submit_args="$submit_args --api-key $API_KEY --identified"
-        else
-            submit_args="$submit_args --anonymous"
+        if [ -f "$RESULTS_DIR/system-info.json" ]; then
+            format_args="$format_args --system-info $RESULTS_DIR/system-info.json"
         fi
         
         if [ -n "$TAGS" ]; then
-            submit_args="$submit_args --tags $TAGS"
+            format_args="$format_args --tags $TAGS"
         fi
         
         if [ -n "$NOTES" ]; then
-            submit_args="$submit_args --notes '$NOTES'"
+            format_args="$format_args --notes '$NOTES'"
         fi
         
-        if python3 "$SCRIPT_DIR/system-info/submit/result_submitter.py" $submit_args; then
-            log_success "Submitted successfully"
+        if python3 "$SCRIPT_DIR/system-info/submit/result_formatter.py" $format_args; then
+            log_success "Report generated"
         else
-            log_error "Submission failed, saving for later"
-            python3 "$SCRIPT_DIR/system-info/submit/result_submitter.py" \
-                $submit_args \
-                --save-for-later \
-                --pending-dir "$RESULTS_DIR/pending"
+            log_error "Report generation failed"
         fi
     done
+    
+    # List generated reports
+    report_count=$(find "$RESULTS_DIR/reports" -name "*.txt" 2>/dev/null | wc -l)
+    if [ "$report_count" -gt 0 ]; then
+        echo ""
+        log_success "$report_count text reports generated in $RESULTS_DIR/reports/"
+        echo ""
+        log_info "Reports available:"
+        for report in "$RESULTS_DIR/reports"/*.txt; do
+            echo "  - $(basename "$report")"
+        done
+        echo ""
+        log_info "To submit results, copy and paste report contents to:"
+        log_info "  https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues"
+    fi
 }
 
 log_section "ScratchBird Complete Test Suite"
 log_info "Suite: $SUITE"
 log_info "Engine: $ENGINE"
 log_info "Results: $RESULTS_DIR"
-if [ "$SUBMIT_RESULTS" = "true" ]; then
-    log_info "Submission: ENABLED"
-    if [ -n "$API_KEY" ]; then
-        log_info "Authentication: API Key provided"
-    else
-        log_info "Authentication: Anonymous"
-    fi
+if [ "$GENERATE_REPORT" = "true" ]; then
+    log_info "Report generation: ENABLED"
 fi
 
 # Collect system info first
@@ -318,16 +318,16 @@ log_info "All results saved to: $RESULTS_DIR"
 json_count=$(find "$RESULTS_DIR" -name "*.json" 2>/dev/null | wc -l)
 log_info "Result files generated: $json_count"
 
-# Submit results if requested
-if [ "$SUBMIT_RESULTS" = "true" ]; then
-    submit_results
+# Generate reports if requested
+if [ "$GENERATE_REPORT" = "true" ]; then
+    generate_text_reports
 else
     echo ""
-    log_info "To submit results, run:"
-    echo "  SUBMIT=true $0 $SUITE $ENGINE"
+    log_info "To generate text reports, run:"
+    echo "  REPORT=true $0 $SUITE $ENGINE"
     echo ""
-    log_info "Or submit manually:"
-    echo "  python3 system-info/submit/result_submitter.py --benchmark $RESULTS_DIR/*.json --system-info $RESULTS_DIR/system-info.json"
+    log_info "Or generate manually:"
+    echo "  python3 system-info/submit/result_formatter.py --benchmark $RESULTS_DIR/*.json --system-info $RESULTS_DIR/system-info.json"
 fi
 
 exit 0
