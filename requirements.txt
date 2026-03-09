@@ -1,0 +1,19 @@
+# Python dependencies for ScratchBird Benchmarks
+
+# System information collection
+psutil>=5.9.0
+
+# Database drivers
+# Firebird
+fdb>=2.0.0
+
+# MySQL
+# mysql-connector-python>=8.0.0
+# or
+# PyMySQL>=1.0.0
+
+# PostgreSQL
+# psycopg2-binary>=2.9.0
+
+# Optional dependencies for better system detection
+# distro>=1.8.0  # Linux distribution detection
