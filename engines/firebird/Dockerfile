@@ -1,10 +1,10 @@
 # FirebirdSQL Benchmark Container
 # Uses official Firebird image with benchmark schema pre-loaded
 
-FROM jacobalberty/firebird:v4.0.4
+FROM jacobalberty/firebird:v5.0.1
 
 LABEL maintainer="ScratchBird Benchmarks"
-LABEL description="FirebirdSQL 4.0.4 for comparative benchmarking"
+LABEL description="FirebirdSQL 5.0.1 for comparative benchmarking"
 
 # Install additional tools for benchmarking
 RUN apt-get update && apt-get install -y \

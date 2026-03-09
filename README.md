@@ -58,9 +58,9 @@ The benchmark suite tracks exact versions of each engine:
 
 | Engine | Current Version | Image Tag |
 |--------|-----------------|-----------|
-| FirebirdSQL | 4.0.4 | `jacobalberty/firebird:v4.0.4` |
-| MySQL | 8.0.36 | `mysql:8.0.36` |
-| PostgreSQL | 16.1 | `postgres:16.1` |
+| FirebirdSQL | 5.0.1 | `jacobalberty/firebird:v5.0.1` |
+| MySQL | 9.0.1 | `mysql:9.0.1` |
+| PostgreSQL | 18.0 | `postgres:18.0` |
 
 Version information is collected automatically and stored in:
 - `results/all-versions.json` - Full JSON metadata

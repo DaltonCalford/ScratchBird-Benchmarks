@@ -1,10 +1,10 @@
 # PostgreSQL Benchmark Container
-# Uses official PostgreSQL 16 image with benchmark schema pre-loaded
+# Uses official PostgreSQL 18 image with benchmark schema pre-loaded
 
-FROM postgres:16.1
+FROM postgres:18.0
 
 LABEL maintainer="ScratchBird Benchmarks"
-LABEL description="PostgreSQL 16.1 for comparative benchmarking"
+LABEL description="PostgreSQL 18.0 for comparative benchmarking"
 
 # Install additional tools for benchmarking
 RUN apt-get update && apt-get install -y \

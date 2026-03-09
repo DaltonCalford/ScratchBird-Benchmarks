@@ -1,10 +1,10 @@
 # MySQL Benchmark Container
-# Uses official MySQL 8.0 image with benchmark schema pre-loaded
+# Uses official MySQL 9.0 image with benchmark schema pre-loaded
 
-FROM mysql:8.0.36
+FROM mysql:9.0.1
 
 LABEL maintainer="ScratchBird Benchmarks"
-LABEL description="MySQL 8.0.36 for comparative benchmarking"
+LABEL description="MySQL 9.0.1 for comparative benchmarking"
 
 # Install additional tools for benchmarking
 RUN apt-get update && apt-get install -y \
