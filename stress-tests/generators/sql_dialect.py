@@ -164,8 +164,8 @@ class FirebirdDialect(SQLDialect):
     def date_trunc(self, field: str, expression: str) -> str:
         # Firebird doesn't have DATE_TRUNC, use EXTRACT and reconstruct
         if field.upper() == 'MONTH':
-            return f"CAST(EXTRACT(YEAR FROM {expression}) || '-' || 
-                   f"LPAD(CAST(EXTRACT(MONTH FROM {expression}) AS VARCHAR(2)), 2, '0') || '-01' AS DATE)"
+            return (f"CAST(EXTRACT(YEAR FROM {expression}) || '-' || "
+                    f"LPAD(CAST(EXTRACT(MONTH FROM {expression}) AS VARCHAR(2)), 2, '0') || '-01' AS DATE)")
         elif field.upper() == 'YEAR':
             return f"CAST(EXTRACT(YEAR FROM {expression}) || '-01-01' AS DATE)"
         elif field.upper() == 'DAY':

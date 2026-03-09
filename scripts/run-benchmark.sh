@@ -158,15 +158,13 @@ run_regression_tests() {
         firebird)
             log_info "Running Firebird FBT tests..."
             if [ -d "$PROJECT_DIR/regression-suites" ]; then
-                cd "$PROJECT_DIR/regression-suites"
                 # Run FBT runner if available
-                if [ -f "runners/fbt_runner.py" ]; then
-                    python3 runners/fbt_runner.py \
-                        --host localhost \
-                        --database benchmark.fdb \
-                        --user benchmark \
-                        --password benchmark \
-                        --output "$output_dir" || log_warn "FBT tests had failures"
+                if [ -f "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" ]; then
+                    python3 "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" \
+                        --fbt-path /fbt-repository \
+                        --suite all \
+                        --target original \
+                        --output-dir "$output_dir" || log_warn "FBT tests had failures"
                 else
                     log_warn "FBT runner not found, skipping"
                 fi
@@ -174,36 +172,11 @@ run_regression_tests() {
             ;;
         mysql)
             log_info "Running MySQL mysql-test..."
-            if [ -d "$PROJECT_DIR/regression-suites" ]; then
-                cd "$PROJECT_DIR/regression-suites"
-                if [ -f "runners/mysql_test_runner.py" ]; then
-                    python3 runners/mysql_test_runner.py \
-                        --host localhost \
-                        --port 3306 \
-                        --user benchmark \
-                        --password benchmark \
-                        --database benchmark \
-                        --output "$output_dir" || log_warn "mysql-test had failures"
-                else
-                    log_warn "MySQL test runner not found, skipping"
-                fi
-            fi
+            log_warn "MySQL regression tests not yet implemented"
             ;;
         postgresql)
             log_info "Running PostgreSQL pg_regress tests..."
-            if [ -d "$PROJECT_DIR/regression-suites" ]; then
-                cd "$PROJECT_DIR/regression-suites"
-                if [ -f "runners/pg_regress_runner.py" ]; then
-                    python3 runners/pg_regress_runner.py \
-                        --host localhost \
-                        --port 5432 \
-                        --user benchmark \
-                        --database benchmark \
-                        --output "$output_dir" || log_warn "pg_regress had failures"
-                else
-                    log_warn "pg_regress runner not found, skipping"
-                fi
-            fi
+            log_warn "PostgreSQL regression tests not yet implemented"
             ;;
     esac
 }

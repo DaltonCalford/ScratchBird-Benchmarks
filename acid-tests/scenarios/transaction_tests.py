@@ -100,7 +100,7 @@ class AtomicityTests:
                     ROLLBACK;
                 """,
                 verification_sql="SELECT value FROM atomic_test WHERE id = 100",
-                expected_result=0,  -- Should be unchanged
+                expected_result=0,  # Should be unchanged
             ),
             TransactionTest(
                 name="atomic_multi_table_commit",
@@ -134,7 +134,7 @@ class AtomicityTests:
                         (SELECT balance FROM accounts WHERE account_id = 1) +
                         (SELECT balance FROM accounts WHERE account_id = 2)
                 """,
-                expected_result=2000.00,  -- Total should remain constant
+                expected_result=2000.00,  # Total should remain constant
             ),
             TransactionTest(
                 name="atomic_savepoint_rollback",
@@ -155,7 +155,7 @@ class AtomicityTests:
                     COMMIT;
                 """,
                 verification_sql="SELECT COUNT(*) FROM atomic_test",
-                expected_result=2,  -- Only id 1 and 4 should exist
+                expected_result=2,  # Only id 1 and 4 should exist
             ),
         ]
 
@@ -345,7 +345,7 @@ class IsolationTests:
                 """,
                 test_sql="-- Concurrent test required",
                 verification_sql="SELECT counter FROM isolation_test WHERE id = 1",
-                expected_result=100,  -- After 100 concurrent increments
+                expected_result=100,  # After 100 concurrent increments
             ),
             TransactionTest(
                 name="isolation_read_committed_default",
