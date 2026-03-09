@@ -34,7 +34,7 @@ All requested test suites have been implemented and committed to the repository.
 | **tpc-h** | ✅ Complete | `tpc-h/` | TPC-H analytics (4 representative queries) |
 | **fault-tolerance** | ✅ Complete | `fault-tolerance-tests/` | Crash recovery, resource exhaustion |
 
-### ✅ Phase 4: Engine Differential (Complete - NEW!)
+### ✅ Phase 4: Engine Differential (Complete)
 
 | Suite | Status | Files | Description |
 |-------|--------|-------|-------------|
@@ -43,11 +43,19 @@ All requested test suites have been implemented and committed to the repository.
 | **postgresql-optimized** | ✅ Complete | `scenarios/postgresql_optimized_tests.py` | 11 tests for PostgreSQL strengths |
 | **firebird-optimized** | ✅ Complete | `scenarios/firebird_optimized_tests.py` | 12 tests for Firebird strengths |
 
+### ✅ Phase 5: System Info & Submission (Complete - NEW!)
+
+| Component | Status | Files | Description |
+|-----------|--------|-------|-------------|
+| **system-info** | ✅ Complete | `system-info/` | Hardware/OS collection & result submission |
+| **collector** | ✅ Complete | `collectors/system_info.py` | CPU, GPU, RAM, disk, OS detection |
+| **submitter** | ✅ Complete | `submit/result_submitter.py` | Result upload to project server |
+
 ## Repository Structure
 
 ```
 ScratchBird-Benchmarks/
-├── run-all-tests.sh                    # Master orchestrator
+├── run-all-tests.sh                    # Master orchestrator with system info
 ├── TEST_STRATEGY.md                    # Complete test strategy
 ├── TEST_COVERAGE.md                    # This file
 │
@@ -131,86 +139,107 @@ ScratchBird-Benchmarks/
 │   └── scenarios/
 │       └── fault_tests.py
 │
-└── engine-differential-tests/          # ✅ Phase 4 - NEW!
-    ├── scenarios/
-    │   ├── mysql_optimized_tests.py    # 10 MySQL-specific tests
-    │   ├── postgresql_optimized_tests.py # 11 PostgreSQL-specific tests
-    │   └── firebird_optimized_tests.py # 12 Firebird-specific tests
-    ├── runners/
-    │   └── differential_test_runner.py
-    ├── scripts/
-    │   └── run-differential-tests.sh
+├── engine-differential-tests/          # ✅ Phase 4
+│   ├── scenarios/
+│   │   ├── mysql_optimized_tests.py    # 10 MySQL-specific tests
+│   │   ├── postgresql_optimized_tests.py # 11 PostgreSQL-specific tests
+│   │   └── firebird_optimized_tests.py # 12 Firebird-specific tests
+│   ├── runners/
+│   │   └── differential_test_runner.py
+│   ├── scripts/
+│   │   └── run-differential-tests.sh
+│   └── README.md
+│
+└── system-info/                        # ✅ Phase 5 - NEW!
+    ├── collectors/
+    │   └── system_info.py              # Hardware/OS collection
+    ├── submit/
+    │   └── result_submitter.py         # Result submission
     └── README.md
 ```
 
-## Engine Differential Tests (NEW)
+## System Information & Submission (NEW)
 
-These tests exploit each engine's unique architecture:
+### Collected System Information
 
-### MySQL Wins On:
-| Test | Advantage | Factor |
-|------|-----------|--------|
-| `clustered_pk_range_scan` | Sequential I/O | **5-20x** |
-| `covering_index_lookup` | Index-only access | **2-5x** |
-| `secondary_index_insert_buffering` | Change buffer | **3-10x** |
+| Category | Details |
+|----------|---------|
+| **CPU** | Model, cores, frequency, cache, flags, virtualization |
+| **GPU** | Vendor, model, VRAM, CUDA support, driver |
+| **Memory** | Total/available, type (DDR4/DDR5), speed, swap |
+| **Disk** | Device, filesystem, space, type (SSD/HDD/NVMe) |
+| **OS** | Name, version, distribution, kernel, timezone |
+| **Container** | Docker/Podman/K8s detection, cgroup limits |
+| **Network** | Hostname, IP, MAC address |
 
-### PostgreSQL Wins On:
-| Test | Advantage | Factor |
-|------|-----------|--------|
-| `parallel_seq_scan_large_table` | Parallel workers | **4-8x** |
-| `gin_fulltext_search` | GIN index | **50-100x** |
-| `hash_join_large_tables` | O(n+m) vs O(n*m) | **10-100x** |
+### Submission Features
 
-### Firebird Wins On:
-| Test | Advantage | Factor |
-|------|-----------|--------|
-| `mga_readers_dont_block` | No read locks | **10-100x** |
-| `mga_rollback_performance` | Instant rollback | **100-1000x** |
-| `storage_compact_nulls` | Bitmap storage | **30-50%** smaller |
+- **Anonymous submission** (default) - No user identification
+- **Authenticated submission** - API key for identified submissions
+- **Offline mode** - Save for later when connection available
+- **Compression** - Large results automatically compressed
+- **Validation** - Results validated before submission
 
 ## Usage
 
-### Run All Tests
+### Run All Tests with System Info
 
 ```bash
 ./run-all-tests.sh all all
 ```
 
-### Run Specific Suite
+### Run with Result Submission
 
 ```bash
-./run-all-tests.sh acid postgresql
-./run-all-tests.sh stress mysql
-./run-all-tests.sh tpc-c all
-./run-all-tests.sh engine-differential all  # NEW!
+# Submit anonymously
+SUBMIT=true ./run-all-tests.sh all all
+
+# Submit with tags
+SUBMIT=true TAGS="production,aws,r5.xlarge" ./run-all-tests.sh stress mysql
+
+# Authenticated submission
+SUBMIT=true API_KEY=sb_api_xxx ./run-all-tests.sh all all
+
+# With notes
+SUBMIT=true NOTES="Initial benchmark on new instance" ./run-all-tests.sh all all
 ```
 
-### Run Differential Tests Directly
+### Collect System Info Only
 
 ```bash
-# Test where each engine wins
+python3 system-info/collectors/system_info.py --output my-system.json
+```
+
+### Submit Manually
+
+```bash
+# Interactive mode
+python3 system-info/submit/result_submitter.py
+
+# Direct submission
+python3 system-info/submit/result_submitter.py \
+  --benchmark results/stress-mysql-20240308.json \
+  --system-info system-info.json \
+  --tags production,aws \
+  --notes "First run"
+
+# Save for later (offline)
+python3 system-info/submit/result_submitter.py \
+  --benchmark results/test.json \
+  --save-for-later
+
+# Submit pending results
+python3 system-info/submit/result_submitter.py --submit-pending
+```
+
+### Run Differential Tests
+
+```bash
+# Test all engine-optimized scenarios
 ./engine-differential-tests/scripts/run-differential-tests.sh all all
 
 # Test MySQL scenarios on all engines
 ./engine-differential-tests/scripts/run-differential-tests.sh all mysql
-
-# Test PostgreSQL scenarios on all engines
-./engine-differential-tests/scripts/run-differential-tests.sh all postgresql
-```
-
-### Testing ScratchBird
-
-When ScratchBird is ready:
-
-```bash
-# Firebird mode - uses Firebird dialect
-./run-all-tests.sh all firebird  # Against scratchbird:3050
-
-# MySQL mode - uses MySQL dialect
-./run-all-tests.sh all mysql     # Against scratchbird:3306
-
-# PostgreSQL mode - uses PostgreSQL dialect
-./run-all-tests.sh all postgresql # Against scratchbird:5432
 ```
 
 ## Test Execution Matrix
@@ -236,6 +265,31 @@ Legend:
 - ✅ Native engine baseline
 - ⏳ Pending ScratchBird testing
 
+## Engine Differential Tests
+
+These tests exploit each engine's unique architecture:
+
+### MySQL Wins On:
+| Test | Advantage | Factor |
+|------|-----------|--------|
+| `clustered_pk_range_scan` | Sequential I/O | **5-20x** |
+| `covering_index_lookup` | Index-only access | **2-5x** |
+| `secondary_index_insert_buffering` | Change buffer | **3-10x** |
+
+### PostgreSQL Wins On:
+| Test | Advantage | Factor |
+|------|---------------------|-----------|
+| `parallel_seq_scan_large_table` | Parallel workers | **4-8x** |
+| `gin_fulltext_search` | GIN index | **50-100x** |
+| `hash_join_large_tables` | O(n+m) vs O(n*m) nested loop | **10-100x** |
+
+### Firebird Wins On:
+| Test | Advantage | Factor |
+|------|-------------------|-----------|
+| `mga_readers_dont_block` | No read locks (MGA) | **10-100x** |
+| `mga_rollback_performance` | Instant rollback | **100-1000x** |
+| `storage_compact_nulls` | Bitmap NULL storage | **30-50%** smaller |
+
 ## Key Features
 
 ### 1. Dialect-Aware Testing
@@ -257,7 +311,19 @@ Tests that expose architectural differences:
 - PostgreSQL: Parallel query exploitation (4-100x advantage)
 - Firebird: MGA exploitation (10-1000x advantage)
 
-### 4. TPC-C Complete Implementation
+### 4. System Information Collection
+- Hardware specs (CPU, GPU, RAM, disk)
+- Operating system details
+- Container/virtualization detection
+- Automatic correlation with benchmark results
+
+### 5. Result Submission
+- Submit to project server for aggregation
+- Anonymous or authenticated
+- Offline mode for air-gapped environments
+- Tagging and notes for categorization
+
+### 6. TPC-C Complete Implementation
 All 5 transaction types with proper weights:
 - New-Order (45%): Multi-item order placement
 - Payment (43%): Customer payment processing
@@ -265,7 +331,7 @@ All 5 transaction types with proper weights:
 - Delivery (4%): Batch delivery processing
 - Stock-Level (4%): Inventory check
 
-### 5. Edge Case Coverage
+### 7. Edge Case Coverage
 Data type tests cover:
 - Numeric: MAX_INT overflow, division by zero, decimal rounding
 - String: Unicode, emoji, empty vs NULL, trailing spaces
@@ -282,7 +348,12 @@ All test suites output JSON:
   "metadata": {
     "engine": "postgresql",
     "suite": "acid",
-    "timestamp": "20240308_143022"
+    "timestamp": "20240308_143022",
+    "system_info": {
+      "cpu": { "model": "Intel Xeon", "cores": 16 },
+      "memory": { "total_mb": 65536 },
+      "os": { "distribution": "Ubuntu 22.04" }
+    }
   },
   "results": {
     "atomicity": {"passed": 6, "failed": 0},
@@ -302,7 +373,7 @@ All test suites output JSON:
 ## CI/CD Integration
 
 ```yaml
-name: Complete Test Suite
+name: Complete Test Suite with Submission
 on: [push, pull_request]
 
 jobs:
@@ -314,8 +385,13 @@ jobs:
       - name: Start engines
         run: docker-compose up -d firebird mysql postgresql
       
-      - name: Run all tests
+      - name: Run all tests with submission
         run: ./run-all-tests.sh all all
+        env:
+          SUBMIT: true
+          API_KEY: ${{ secrets.SCRATCHBIRD_API_KEY }}
+          TAGS: "ci,github-actions,${{ matrix.os }}"
+          NOTES: "Automated CI run"
       
       - name: Upload results
         uses: actions/upload-artifact@v4
@@ -364,5 +440,5 @@ All test suites are available at:
 https://github.com/DaltonCalford/ScratchBird-Benchmarks
 
 ---
-**Status**: All 14 test suites implemented and committed ✅
-**Latest Addition**: Engine Differential Tests (33 architectural exploitation tests)
+**Status**: All 15 components implemented and committed ✅
+**Latest Addition**: System Info Collection & Result Submission (Phase 5)
