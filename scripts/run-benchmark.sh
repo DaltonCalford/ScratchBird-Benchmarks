@@ -24,6 +24,47 @@ log_error() { echo -e "${RED}[FAIL]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_section() { echo -e "\n${CYAN}========================================${NC}"; echo -e "${CYAN}$1${NC}"; echo -e "${CYAN}========================================${NC}\n"; }
 
+check_python_deps() {
+    local engine="$1"
+    local missing=()
+    
+    # Check for psutil (system info)
+    if ! python3 -c "import psutil" 2>/dev/null; then
+        missing+=("psutil")
+    fi
+    
+    # Check for engine-specific modules
+    case "$engine" in
+        firebird)
+            if ! python3 -c "import fdb" 2>/dev/null; then
+                missing+=("fdb")
+            fi
+            ;;
+        mysql)
+            if ! python3 -c "import pymysql" 2>/dev/null && ! python3 -c "import mysql.connector" 2>/dev/null; then
+                missing+=("pymysql or mysql-connector-python")
+            fi
+            ;;
+        postgresql)
+            if ! python3 -c "import psycopg2" 2>/dev/null; then
+                missing+=("psycopg2-binary")
+            fi
+            ;;
+    esac
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        log_warn "Missing Python dependencies: ${missing[*]}"
+        log_info "Install with: pip3 install ${missing[*]}"
+        log_info "Or: pip3 install -r requirements.txt"
+        echo ""
+        read -p "Continue anyway? [y/N]: " -n 1 -r
+        echo
+        if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+            exit 1
+        fi
+    fi
+}
+
 show_help() {
     cat << EOF
 Run Benchmarks Against a Single Database Engine
@@ -453,6 +494,9 @@ mkdir -p "$OUTPUT_DIR"
 
 # Verify isolation
 verify_engine_running "$ENGINE"
+
+# Check Python dependencies
+check_python_deps "$ENGINE"
 
 # Show banner
 log_section "ScratchBird Benchmark"
