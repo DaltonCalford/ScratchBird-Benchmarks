@@ -26,13 +26,16 @@ log_section() { echo -e "\n${CYAN}========================================${NC}"
 
 show_help() {
     cat << EOF
-ScratchBird Benchmark Engine Startup
+ScratchBird Benchmark Engine Startup (ALL ENGINES)
+
+WARNING: This script starts ALL THREE engines simultaneously.
+For isolated benchmarks, use: ./start-engine.sh <engine> start
 
 Usage: $0 [COMMAND] [OPTIONS]
 
 Commands:
   build       Build all engine Docker images
-  start       Start all engines
+  start       Start ALL engines (for comparison testing)
   stop        Stop all engines
   restart     Restart all engines
   status      Check engine status
@@ -46,10 +49,18 @@ Options:
 
 Examples:
   $0 build              # Build all engine images
-  $0 start              # Start all engines
+  $0 start              # Start ALL engines (uses more resources)
   $0 status             # Check if engines are running
   $0 logs firebird      # Show Firebird logs
   $0 connect            # Show how to connect to each engine
+
+For Single-Engine Benchmarks (Recommended):
+  ./start-engine.sh firebird start    # Start Firebird only
+  ./start-engine.sh mysql start       # Start MySQL only
+  ./start-engine.sh postgresql start  # Start PostgreSQL only
+
+Then run benchmarks:
+  ./run-benchmark.sh firebird all     # Run all tests on Firebird
 
 EOF
 }

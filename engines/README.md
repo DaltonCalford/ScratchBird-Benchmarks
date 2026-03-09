@@ -18,7 +18,39 @@ This directory contains Docker images for the three database engines used in Scr
 
 ## Quick Start
 
-### Using Docker Compose (Recommended)
+### Single Engine (Recommended for Benchmarks)
+
+For accurate benchmark results, run ONE engine at a time:
+
+```bash
+# Start a single engine
+./scripts/start-engine.sh firebird start
+./scripts/start-engine.sh mysql start
+./scripts/start-engine.sh postgresql start
+
+# Run benchmarks against that engine
+./scripts/run-benchmark.sh firebird all
+./scripts/run-benchmark.sh mysql stress
+./scripts/run-benchmark.sh postgresql acid
+
+# Stop when done
+./scripts/start-engine.sh firebird stop
+```
+
+### All Engines (For Comparison Testing)
+
+```bash
+# Build all engine images
+./scripts/start-engines.sh build
+
+# Start all engines (uses more resources)
+./scripts/start-engines.sh start
+
+# Check status
+./scripts/start-engines.sh status
+```
+
+### Using Docker Compose
 
 ```bash
 # Build all engine images
@@ -254,11 +286,72 @@ Then rebuild: `docker-compose build`
 - No SSL/TLS configured
 - Not suitable for production use
 
+## Benchmark Workflow
+
+### Recommended: Single Engine Isolation
+
+For accurate benchmark results, test ONE engine at a time:
+
+```bash
+# 1. Start a single engine
+./scripts/start-engine.sh firebird start
+
+# 2. Run benchmarks
+./scripts/run-benchmark.sh firebird all --report
+
+# 3. Stop the engine
+./scripts/start-engine.sh firebird stop
+
+# 4. Repeat for other engines
+./scripts/start-engine.sh mysql start
+./scripts/run-benchmark.sh mysql all --report
+./scripts/start-engine.sh mysql stop
+
+./scripts/start-engine.sh postgresql start
+./scripts/run-benchmark.sh postgresql all --report
+./scripts/start-engine.sh postgresql stop
+```
+
+### Why Single Engine?
+
+Running benchmarks with only ONE engine ensures:
+- **No resource contention** - All CPU/RAM available to tested engine
+- **Accurate timing** - No interference from other database processes
+- **Consistent I/O** - Disk not shared between multiple engines
+- **Fair comparison** - Same resources for each engine tested
+
+### Available Benchmark Suites
+
+```bash
+# Run specific test suites
+./scripts/run-benchmark.sh <engine> regression      # Upstream tests
+./scripts/run-benchmark.sh <engine> stress          # Stress tests
+./scripts/run-benchmark.sh <engine> acid            # ACID compliance
+./scripts/run-benchmark.sh <engine> performance     # Performance tests
+./scripts/run-benchmark.sh <engine> tpc-c           # TPC-C OLTP
+./scripts/run-benchmark.sh <engine> tpc-h           # TPC-H analytics
+./scripts/run-benchmark.sh <engine> engine-differential  # Architecture tests
+./scripts/run-benchmark.sh <engine> all             # All suites
+```
+
+### Generate Report
+
+Add `--report` to generate a text report:
+
+```bash
+./scripts/run-benchmark.sh firebird all --report --tags production,aws
+```
+
+Reports are saved to `results/<suite>-<engine>-<timestamp>/reports/`
+
 ## Clean Up
 
 ```bash
 # Stop and remove containers
 docker-compose down
+
+# Remove single engine container
+./scripts/start-engine.sh firebird clean
 
 # Remove containers and volumes (WARNING: deletes data!)
 docker-compose down -v
