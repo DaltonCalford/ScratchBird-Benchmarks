@@ -2,11 +2,14 @@
 #
 # Master Test Orchestrator for ScratchBird Benchmarks
 #
-# Runs all test suites: regression, stress, acid, concurrency, data-type, ddl, optimizer, protocol, catalog, performance, tpc-c, tpc-h, fault-tolerance
+# Runs all test suites with system information collection
+# and optional result submission to project server.
 #
 # Usage: ./run-all-tests.sh [suite] [engine] [options]
-#   suite: all, regression, stress, acid, concurrency, data-type, ddl, optimizer, protocol, catalog, performance, tpc-c, tpc-h, fault-tolerance
-#   engine: firebird, mysql, postgresql, or all
+#   suite: all, regression, stress, acid, concurrency, data-type, ddl, 
+#          optimizer, protocol, catalog, performance, tpc-c, tpc-h, 
+#          fault-tolerance, engine-differential
+#   engine: firebird, mysql, postgresql, all
 #
 
 set -e
@@ -18,6 +21,8 @@ mkdir -p "$RESULTS_DIR"
 
 SUITE="${1:-all}"
 ENGINE="${2:-all}"
+SUBMIT_RESULTS="${SUBMIT:-false}"
+API_KEY="${API_KEY:-}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -34,34 +39,41 @@ log_section() { echo -e "\n${CYAN}========================================${NC}"
 
 show_help() {
     cat << EOF
-ScratchBird Complete Test Suite
+ScratchBird Complete Test Suite with System Info & Submission
 
 Usage: $0 [suite] [engine] [options]
 
 Suites:
   all              Run all test suites
-  regression       Upstream test suite compatibility (FBT, mysql-test, pg_regress)
-  stress           Bulk operations, JOINs, aggregations (dialect-aware)
-  acid             ACID compliance (atomicity, consistency, isolation, durability)
-  concurrency      Locking, deadlocks, contention, connection pooling
-  data-type        Numeric, string, datetime, binary edge cases
-  ddl              CREATE, ALTER, DROP, constraints, indexes
-  optimizer        Query plan stability, cost model, join ordering
-  protocol         Wire protocol, prepared statements, error handling
-  catalog          System tables, metadata queries, tool compatibility
-  performance      Micro-benchmarks, throughput, latency distribution
-  tpc-c            TPC-C OLTP benchmark (5 transaction types)
-  tpc-h            TPC-H analytics benchmark (22 queries)
-  fault-tolerance  Crash recovery, resource exhaustion, network faults
+  regression       Upstream test suite compatibility
+  stress           Bulk operations, JOINs, aggregations
+  acid             ACID compliance tests
+  concurrency      Locking, deadlocks, contention
+  data-type        Numeric, string, datetime edge cases
+  ddl              CREATE, ALTER, DROP operations
+  optimizer        Query plan stability, cost model
+  protocol         Wire protocol compatibility
+  catalog          System tables, metadata queries
+  performance      Micro-benchmarks, throughput
+  tpc-c            TPC-C OLTP benchmark
+  tpc-h            TPC-H analytics benchmark
+  fault-tolerance  Crash recovery, resource exhaustion
+  engine-differential  Architectural exploitation tests
 
 Engines:
   firebird, mysql, postgresql, all
 
+Environment Variables:
+  SUBMIT=true      Submit results to project server
+  API_KEY=xxx      API key for authenticated submission
+  TAGS="tag1,tag2" Tags for result categorization
+  NOTES="notes"    Additional notes for submission
+
 Examples:
   $0 all all                    # Run everything
-  $0 acid postgresql           # ACID tests only for PostgreSQL
+  $0 acid postgresql           # ACID tests for PostgreSQL
   $0 stress mysql              # Stress tests for MySQL
-  $0 tpc-c all                # TPC-C for all engines
+  SUBMIT=true $0 tpc-c all     # Run TPC-C and submit results
 
 EOF
 }
@@ -71,10 +83,107 @@ if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
     exit 0
 fi
 
+# Collect system information
+collect_system_info() {
+    log_section "Collecting System Information"
+    
+    if command -v python3 &> /dev/null; then
+        python3 "$SCRIPT_DIR/system-info/collectors/system_info.py" \
+            --output "$RESULTS_DIR/system-info.json" \
+            --quiet
+        
+        if [ -f "$RESULTS_DIR/system-info.json" ]; then
+            log_success "System info collected: $RESULTS_DIR/system-info.json"
+            
+            # Display summary
+            echo ""
+            python3 -c "
+import json
+with open('$RESULTS_DIR/system-info.json') as f:
+    data = json.load(f)
+    print(f\"CPU: {data['cpu']['model']}\")
+    print(f\"Cores: {data['cpu']['physical_cores']} physical, {data['cpu']['logical_cores']} logical\")
+    print(f\"Memory: {data['memory']['total_mb']:,} MB\")
+    print(f\"OS: {data['os']['distribution'] or data['os']['name']}\")
+    if data['disks']:
+        print(f\"Disk: {data['disks'][0]['type']}, {data['disks'][0]['free_gb']:.1f} GB free\")
+"
+        else
+            log_warn "System info collection failed"
+        fi
+    else
+        log_warn "Python3 not available, skipping system info collection"
+    fi
+}
+
+# Submit results if requested
+submit_results() {
+    if [ "$SUBMIT_RESULTS" != "true" ]; then
+        return
+    fi
+    
+    log_section "Submitting Results to Project Server"
+    
+    if [ ! -f "$RESULTS_DIR/system-info.json" ]; then
+        log_warn "No system info available, cannot submit"
+        return
+    fi
+    
+    # Find all result files
+    result_files=$(find "$RESULTS_DIR" -name "*.json" -not -name "system-info.json" 2>/dev/null)
+    
+    if [ -z "$result_files" ]; then
+        log_warn "No result files to submit"
+        return
+    fi
+    
+    # Submit each result file
+    for result_file in $result_files; do
+        log_info "Submitting: $(basename "$result_file")"
+        
+        submit_args="--benchmark $result_file --system-info $RESULTS_DIR/system-info.json"
+        
+        if [ -n "$API_KEY" ]; then
+            submit_args="$submit_args --api-key $API_KEY --identified"
+        else
+            submit_args="$submit_args --anonymous"
+        fi
+        
+        if [ -n "$TAGS" ]; then
+            submit_args="$submit_args --tags $TAGS"
+        fi
+        
+        if [ -n "$NOTES" ]; then
+            submit_args="$submit_args --notes '$NOTES'"
+        fi
+        
+        if python3 "$SCRIPT_DIR/system-info/submit/result_submitter.py" $submit_args; then
+            log_success "Submitted successfully"
+        else
+            log_error "Submission failed, saving for later"
+            python3 "$SCRIPT_DIR/system-info/submit/result_submitter.py" \
+                $submit_args \
+                --save-for-later \
+                --pending-dir "$RESULTS_DIR/pending"
+        fi
+    done
+}
+
 log_section "ScratchBird Complete Test Suite"
 log_info "Suite: $SUITE"
 log_info "Engine: $ENGINE"
 log_info "Results: $RESULTS_DIR"
+if [ "$SUBMIT_RESULTS" = "true" ]; then
+    log_info "Submission: ENABLED"
+    if [ -n "$API_KEY" ]; then
+        log_info "Authentication: API Key provided"
+    else
+        log_info "Authentication: Anonymous"
+    fi
+fi
+
+# Collect system info first
+collect_system_info
 
 # Track results
 declare -A RESULTS
@@ -157,6 +266,13 @@ run_suite() {
             log_section "13. FAULT TOLERANCE TESTS"
             log_info "Testing crash recovery..."
             ;;
+        engine-differential)
+            log_section "14. ENGINE DIFFERENTIAL TESTS"
+            log_info "Testing architectural exploitation..."
+            if [ -f "$SCRIPT_DIR/engine-differential-tests/scripts/run-differential-tests.sh" ]; then
+                $SCRIPT_DIR/engine-differential-tests/scripts/run-differential-tests.sh $engine 2>&1 | tee "$RESULTS_DIR/engine-differential.log" || true
+            fi
+            ;;
         *)
             log_error "Unknown test suite: $suite"
             return 1
@@ -173,7 +289,7 @@ run_suite() {
 # Main execution
 if [ "$SUITE" = "all" ]; then
     # Run all test suites in order
-    SUITES="regression stress acid concurrency data-type ddl optimizer protocol catalog performance tpc-c tpc-h fault-tolerance"
+    SUITES="regression stress acid concurrency data-type ddl optimizer protocol catalog performance tpc-c tpc-h fault-tolerance engine-differential"
     for s in $SUITES; do
         run_suite $s $ENGINE || log_warn "Suite $s had failures"
     done
@@ -187,13 +303,13 @@ total_duration=$((end_time - start_time))
 
 log_section "TEST EXECUTION SUMMARY"
 
-printf "%-20s %10s\n" "Test Suite" "Duration"
-printf "%-20s %10s\n" "----------" "--------"
+printf "%-25s %10s\n" "Test Suite" "Duration"
+printf "%-25s %10s\n" "----------" "--------"
 for suite in "${!RESULTS[@]}"; do
-    printf "%-20s %10ss\n" "$suite" "${RESULTS[$suite]}"
+    printf "%-25s %10ss\n" "$suite" "${RESULTS[$suite]}"
 done
-printf "%-20s %10s\n" "----------" "--------"
-printf "%-20s %10ss\n" "TOTAL" "$total_duration"
+printf "%-25s %10s\n" "----------" "--------"
+printf "%-25s %10ss\n" "TOTAL" "$total_duration"
 
 echo ""
 log_info "All results saved to: $RESULTS_DIR"
@@ -201,5 +317,17 @@ log_info "All results saved to: $RESULTS_DIR"
 # Count JSON result files
 json_count=$(find "$RESULTS_DIR" -name "*.json" 2>/dev/null | wc -l)
 log_info "Result files generated: $json_count"
+
+# Submit results if requested
+if [ "$SUBMIT_RESULTS" = "true" ]; then
+    submit_results
+else
+    echo ""
+    log_info "To submit results, run:"
+    echo "  SUBMIT=true $0 $SUITE $ENGINE"
+    echo ""
+    log_info "Or submit manually:"
+    echo "  python3 system-info/submit/result_submitter.py --benchmark $RESULTS_DIR/*.json --system-info $RESULTS_DIR/system-info.json"
+fi
 
 exit 0
