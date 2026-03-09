@@ -94,12 +94,62 @@ services:
       - ./results:/benchmark-results
       - ./test-suites:/test-suites
       - ./scripts:/scripts
+      - ./regression-suites:/regression-suites
+      # Mount local test repositories (read-only)
+      - /home/dcalford/CliWork/fbt-repository:/fbt-repository:ro
+      - /home/dcalford/CliWork/mysql-server:/mysql-server:ro
+      - /home/dcalford/CliWork/postgresql:/postgresql:ro
     networks:
       - benchmark-net
     environment:
       - BENCHMARK_OUTPUT=/benchmark-results
       - ENGINES=firebird,mysql,postgresql
     command: ["/scripts/run-benchmarks.sh"]
+
+  # Firebird FBT Test Runner
+  fbt-runner:
+    build:
+      context: ./regression-suites
+      dockerfile: Dockerfile.fbt
+    container_name: sb-fbt-runner
+    volumes:
+      - ./results:/results
+      - /home/dcalford/CliWork/fbt-repository:/fbt-repository:ro
+    networks:
+      - benchmark-net
+    profiles:
+      - regression
+      - fbt
+
+  # MySQL Test Runner
+  mysql-test-runner:
+    build:
+      context: ./regression-suites
+      dockerfile: Dockerfile.mysql
+    container_name: sb-mysql-test-runner
+    volumes:
+      - ./results:/results
+      - /home/dcalford/CliWork/mysql-server:/mysql-server:ro
+    networks:
+      - benchmark-net
+    profiles:
+      - regression
+      - mysql-test
+
+  # PostgreSQL Regress Test Runner
+  pg-regress-runner:
+    build:
+      context: ./regression-suites
+      dockerfile: Dockerfile.pg
+    container_name: sb-pg-regress-runner
+    volumes:
+      - ./results:/results
+      - /home/dcalford/CliWork/postgresql:/postgresql:ro
+    networks:
+      - benchmark-net
+    profiles:
+      - regression
+      - pg-regress
 
 volumes:
   firebird_data:
