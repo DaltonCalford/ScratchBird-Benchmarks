@@ -1,0 +1,135 @@
+name: Weekly Comparative Benchmark
+
+on:
+  schedule:
+    # Run every Sunday at 2 AM UTC
+    - cron: '0 2 * * 0'
+  workflow_dispatch:
+    inputs:
+      engines:
+        description: 'Engines to test (comma-separated or "all")'
+        default: 'all'
+        required: false
+      suite:
+        description: 'Benchmark suite'
+        type: choice
+        options:
+          - micro
+          - concurrent
+          - regression
+          - all
+        default: 'all'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v3
+      
+    - name: Build and start engines
+      run: |
+        echo "Starting database engines..."
+        docker-compose up -d firebird mysql postgresql
+        
+        echo "Waiting for engines to be healthy..."
+        sleep 30
+        
+        # Wait for all services
+        for engine in firebird mysql postgresql; do
+          echo "Checking $engine..."
+          timeout=120
+          while [ $timeout -gt 0 ]; do
+            if docker-compose ps $engine | grep -q "healthy"; then
+              echo "  ✓ $engine is healthy"
+              break
+            fi
+            echo "  Waiting... ($timeout seconds left)"
+            sleep 5
+            timeout=$((timeout - 5))
+          done
+          
+          if [ $timeout -le 0 ]; then
+            echo "  ✗ $engine failed to become healthy"
+            docker-compose logs $engine
+            exit 1
+          fi
+        done
+        
+    - name: Collect version information
+      run: |
+        mkdir -p results
+        ./scripts/collect-all-versions.sh results/
+        
+    - name: Run benchmarks
+      run: |
+        ENGINES="${{ github.event.inputs.engines || 'all' }}"
+        SUITE="${{ github.event.inputs.suite || 'all' }}"
+        
+        echo "Running benchmark suite: $SUITE"
+        echo "Engines: $ENGINES"
+        
+        docker-compose run --rm benchmark-runner \
+          --suite="$SUITE" \
+          --engine="$ENGINES" \
+          --output="/benchmark-results/benchmark-${{ github.run_id }}.json"
+          
+    - name: Generate report
+      run: |
+        python3 scripts/generate-report.py results/ --output results/report.html
+        
+    - name: Upload results
+      uses: actions/upload-artifact@v4
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: |
+          results/*.json
+          results/*.txt
+          results/*.html
+        retention-days: 90
+        
+    - name: Update trend data
+      run: |
+        # Append results to historical trend data
+        python3 scripts/update-trends.py results/
+        
+    - name: Cleanup
+      if: always()
+      run: |
+        docker-compose down -v
+        
+  publish-results:
+    needs: benchmark
+    runs-on: ubuntu-latest
+    if: github.event_name == 'schedule' || github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout gh-pages branch
+      uses: actions/checkout@v4
+      with:
+        ref: gh-pages
+        
+    - name: Download results
+      uses: actions/download-artifact@v4
+      with:
+        name: benchmark-results-${{ github.run_id }}
+        path: _data/latest/
+        
+    - name: Update pages
+      run: |
+        # Update the benchmark dashboard
+        python3 scripts/update-dashboard.py _data/latest/
+        
+    - name: Commit and push
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add _data/
+        git add *.html
+        git commit -m "Update benchmark results for run ${{ github.run_id }}" || echo "No changes"
+        git push

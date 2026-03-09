@@ -1,0 +1,111 @@
+# ScratchBird Comparative Benchmarks - Engine Orchestration
+# This compose file starts all database engines for benchmarking
+
+version: '3.8'
+
+services:
+  firebird:
+    build:
+      context: ./engines/firebird
+      dockerfile: Dockerfile
+    container_name: sb-benchmark-firebird
+    environment:
+      - FIREBIRD_DATABASE=benchmark.fdb
+      - FIREBIRD_USER=benchmark
+      - FIREBIRD_PASSWORD=benchmark
+    ports:
+      - "3050:3050"
+    volumes:
+      - firebird_data:/firebird/data
+      - ./results:/benchmark-results
+    networks:
+      - benchmark-net
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/collect-version.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  mysql:
+    build:
+      context: ./engines/mysql
+      dockerfile: Dockerfile
+    container_name: sb-benchmark-mysql
+    environment:
+      - MYSQL_ROOT_PASSWORD=rootpassword
+      - MYSQL_DATABASE=benchmark
+      - MYSQL_USER=benchmark
+      - MYSQL_PASSWORD=benchmark
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./results:/benchmark-results
+    networks:
+      - benchmark-net
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/collect-version.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  postgresql:
+    build:
+      context: ./engines/postgresql
+      dockerfile: Dockerfile
+    container_name: sb-benchmark-postgresql
+    environment:
+      - POSTGRES_USER=benchmark
+      - POSTGRES_PASSWORD=benchmark
+      - POSTGRES_DB=benchmark
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./results:/benchmark-results
+    networks:
+      - benchmark-net
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/collect-version.sh"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ScratchBird will be added when ready
+  # scratchbird:
+  #   build:
+  #     context: ./engines/scratchbird
+  #   container_name: sb-benchmark-scratchbird
+  #   ...
+
+  benchmark-runner:
+    build:
+      context: .
+      dockerfile: scripts/Dockerfile
+    container_name: sb-benchmark-runner
+    depends_on:
+      firebird:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
+      postgresql:
+        condition: service_healthy
+    volumes:
+      - ./results:/benchmark-results
+      - ./test-suites:/test-suites
+      - ./scripts:/scripts
+    networks:
+      - benchmark-net
+    environment:
+      - BENCHMARK_OUTPUT=/benchmark-results
+      - ENGINES=firebird,mysql,postgresql
+    command: ["/scripts/run-benchmarks.sh"]
+
+volumes:
+  firebird_data:
+  mysql_data:
+  postgres_data:
+
+networks:
+  benchmark-net:
+    driver: bridge
