@@ -34,6 +34,15 @@ All requested test suites have been implemented and committed to the repository.
 | **tpc-h** | ✅ Complete | `tpc-h/` | TPC-H analytics (4 representative queries) |
 | **fault-tolerance** | ✅ Complete | `fault-tolerance-tests/` | Crash recovery, resource exhaustion |
 
+### ✅ Phase 4: Engine Differential (Complete - NEW!)
+
+| Suite | Status | Files | Description |
+|-------|--------|-------|-------------|
+| **engine-differential** | ✅ Complete | `engine-differential-tests/` | Architectural exploitation tests |
+| **mysql-optimized** | ✅ Complete | `scenarios/mysql_optimized_tests.py` | 10 tests for MySQL strengths |
+| **postgresql-optimized** | ✅ Complete | `scenarios/postgresql_optimized_tests.py` | 11 tests for PostgreSQL strengths |
+| **firebird-optimized** | ✅ Complete | `scenarios/firebird_optimized_tests.py` | 12 tests for Firebird strengths |
+
 ## Repository Structure
 
 ```
@@ -118,10 +127,46 @@ ScratchBird-Benchmarks/
 │   └── scenarios/
 │       └── tpc_h_queries.py            # Analytical queries
 │
-└── fault-tolerance-tests/              # ✅ Phase 3
-    └── scenarios/
-        └── fault_tests.py
+├── fault-tolerance-tests/              # ✅ Phase 3
+│   └── scenarios/
+│       └── fault_tests.py
+│
+└── engine-differential-tests/          # ✅ Phase 4 - NEW!
+    ├── scenarios/
+    │   ├── mysql_optimized_tests.py    # 10 MySQL-specific tests
+    │   ├── postgresql_optimized_tests.py # 11 PostgreSQL-specific tests
+    │   └── firebird_optimized_tests.py # 12 Firebird-specific tests
+    ├── runners/
+    │   └── differential_test_runner.py
+    ├── scripts/
+    │   └── run-differential-tests.sh
+    └── README.md
 ```
+
+## Engine Differential Tests (NEW)
+
+These tests exploit each engine's unique architecture:
+
+### MySQL Wins On:
+| Test | Advantage | Factor |
+|------|-----------|--------|
+| `clustered_pk_range_scan` | Sequential I/O | **5-20x** |
+| `covering_index_lookup` | Index-only access | **2-5x** |
+| `secondary_index_insert_buffering` | Change buffer | **3-10x** |
+
+### PostgreSQL Wins On:
+| Test | Advantage | Factor |
+|------|-----------|--------|
+| `parallel_seq_scan_large_table` | Parallel workers | **4-8x** |
+| `gin_fulltext_search` | GIN index | **50-100x** |
+| `hash_join_large_tables` | O(n+m) vs O(n*m) | **10-100x** |
+
+### Firebird Wins On:
+| Test | Advantage | Factor |
+|------|-----------|--------|
+| `mga_readers_dont_block` | No read locks | **10-100x** |
+| `mga_rollback_performance` | Instant rollback | **100-1000x** |
+| `storage_compact_nulls` | Bitmap storage | **30-50%** smaller |
 
 ## Usage
 
@@ -137,22 +182,35 @@ ScratchBird-Benchmarks/
 ./run-all-tests.sh acid postgresql
 ./run-all-tests.sh stress mysql
 ./run-all-tests.sh tpc-c all
+./run-all-tests.sh engine-differential all  # NEW!
 ```
 
-### Run Individual Suite Directly
+### Run Differential Tests Directly
 
 ```bash
-# Regression tests
-./regression-suites/run-regression-suite.sh all
+# Test where each engine wins
+./engine-differential-tests/scripts/run-differential-tests.sh all all
 
-# Stress tests (with dialect awareness)
-./stress-tests/scripts/run-dialect-stress-tests.sh postgresql medium
+# Test MySQL scenarios on all engines
+./engine-differential-tests/scripts/run-differential-tests.sh all mysql
 
-# ACID tests
-./acid-tests/scripts/run-acid-tests.sh mysql
+# Test PostgreSQL scenarios on all engines
+./engine-differential-tests/scripts/run-differential-tests.sh all postgresql
+```
 
-# Via Docker Compose
-docker-compose --profile stress run --rm stress-runner
+### Testing ScratchBird
+
+When ScratchBird is ready:
+
+```bash
+# Firebird mode - uses Firebird dialect
+./run-all-tests.sh all firebird  # Against scratchbird:3050
+
+# MySQL mode - uses MySQL dialect
+./run-all-tests.sh all mysql     # Against scratchbird:3306
+
+# PostgreSQL mode - uses PostgreSQL dialect
+./run-all-tests.sh all postgresql # Against scratchbird:5432
 ```
 
 ## Test Execution Matrix
@@ -172,6 +230,7 @@ docker-compose --profile stress run --rm stress-runner
 | tpc-c | ✅ | ✅ | ✅ | ⏳ | ⏳ | ⏳ |
 | tpc-h | ✅ | ✅ | ✅ | ⏳ | ⏳ | ⏳ |
 | fault-tolerance | ✅ | ✅ | ✅ | ⏳ | ⏳ | ⏳ |
+| engine-differential | ✅ | ✅ | ✅ | ⏳ | ⏳ | ⏳ |
 
 Legend:
 - ✅ Native engine baseline
@@ -192,7 +251,13 @@ Each ACID property tested with multiple scenarios:
 - **Isolation**: 5 tests (dirty reads, phantom reads, lost updates)
 - **Durability**: 3 tests (commit persistence, visibility)
 
-### 3. TPC-C Complete Implementation
+### 3. Engine Differential Testing
+Tests that expose architectural differences:
+- MySQL: Clustered PK exploitation (5-20x advantage)
+- PostgreSQL: Parallel query exploitation (4-100x advantage)
+- Firebird: MGA exploitation (10-1000x advantage)
+
+### 4. TPC-C Complete Implementation
 All 5 transaction types with proper weights:
 - New-Order (45%): Multi-item order placement
 - Payment (43%): Customer payment processing
@@ -200,7 +265,7 @@ All 5 transaction types with proper weights:
 - Delivery (4%): Batch delivery processing
 - Stock-Level (4%): Inventory check
 
-### 4. Edge Case Coverage
+### 5. Edge Case Coverage
 Data type tests cover:
 - Numeric: MAX_INT overflow, division by zero, decimal rounding
 - String: Unicode, emoji, empty vs NULL, trailing spaces
@@ -277,8 +342,21 @@ Once ScratchBird is ready:
 2. **SB-FB Mode**: Run with `--engine=firebird --host=scratchbird`
 3. **SB-MySQL Mode**: Run with `--engine=mysql --host=scratchbird`
 4. **SB-PG Mode**: Run with `--engine=postgresql --host=scratchbird`
-5. **Compare**: Use comparison tools to identify gaps
-6. **Iterate**: Fix issues, re-run tests
+5. **Differential**: Run engine-differential tests to verify emulation accuracy
+6. **Compare**: Use comparison tools to identify gaps
+7. **Iterate**: Fix issues, re-run tests
+
+## ScratchBird Emulation Validation
+
+### Good Emulation Signs:
+- **Similar relative performance** - Fast on same tests as native
+- **Similar access patterns** - Same query plans
+- **Architectural exploitation** - Shows same performance characteristics
+
+### Warning Signs:
+- **Uniform performance** - Same speed on all tests (generic implementation)
+- **Opposite pattern** - Fast where native is slow
+- **Missing advantages** - No architectural exploitation visible
 
 ## GitHub Repository
 
@@ -286,4 +364,5 @@ All test suites are available at:
 https://github.com/DaltonCalford/ScratchBird-Benchmarks
 
 ---
-**Status**: All 13 test suites implemented and committed ✅
+**Status**: All 14 test suites implemented and committed ✅
+**Latest Addition**: Engine Differential Tests (33 architectural exploitation tests)
