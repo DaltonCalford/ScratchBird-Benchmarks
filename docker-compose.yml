@@ -151,6 +151,32 @@ services:
       - regression
       - pg-regress
 
+  # Stress Test Runner
+  stress-runner:
+    build:
+      context: ./stress-tests
+      dockerfile: Dockerfile
+    container_name: sb-stress-runner
+    volumes:
+      - ./results:/results
+    networks:
+      - benchmark-net
+    profiles:
+      - stress
+    environment:
+      - ENGINE=${STRESS_ENGINE:-firebird}
+      - SCALE=${STRESS_SCALE:-medium}
+    command: >
+      python3 runners/stress_test_runner.py
+      --engine=${STRESS_ENGINE:-firebird}
+      --host=${STRESS_HOST:-firebird}
+      --port=${STRESS_PORT:-3050}
+      --database=${STRESS_DB:-benchmark.fdb}
+      --user=${STRESS_USER:-benchmark}
+      --password=${STRESS_PASS:-benchmark}
+      --scale=${STRESS_SCALE:-medium}
+      --output-dir=/results
+
 volumes:
   firebird_data:
   mysql_data:
