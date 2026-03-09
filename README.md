@@ -1,254 +1,395 @@
-# ScratchBird Comparative Benchmark Suite
+# ScratchBird Benchmarks
 
-A comprehensive benchmarking framework for comparing ScratchBird database engine against FirebirdSQL, MySQL, and PostgreSQL.
+> Comprehensive benchmarking and compatibility testing suite for the ScratchBird multi-engine database emulator.
 
 ## Overview
 
-This suite provides:
-- **Containerized test environments** for consistent, reproducible results
-- **Version tracking** - Every benchmark run captures exact engine versions
-- **Multiple test categories** - Compatibility, performance, and **upstream regression tests**
-- **Automated reporting** - JSON results with trend analysis and HTML reports
+**ScratchBird** is a multi-protocol database engine that emulates FirebirdSQL, MySQL, and PostgreSQL. This repository contains the official benchmark suite used to validate ScratchBird's compatibility, performance, and behavioral accuracy against the native database engines it emulates.
+
+### Purpose
+
+- **Validate Compatibility**: Ensure ScratchBird passes the same tests as native engines
+- **Measure Performance**: Compare throughput, latency, and resource usage
+- **Verify ACID Compliance**: Test transactional integrity across all modes
+- **Detect Emulation Gaps**: Identify where behavior differs from native engines
+- **Track Progress**: Monitor improvement over time with versioned results
+
+## Project Status
+
+| Component | Status | Tests |
+|-----------|--------|-------|
+| Regression Tests | ✅ Complete | 12,000+ |
+| Stress Tests | ✅ Complete | 50+ |
+| ACID Tests | ✅ Complete | 20 |
+| Data Type Tests | ✅ Complete | 30+ |
+| DDL Tests | ✅ Complete | 5+ |
+| Optimizer Tests | ✅ Complete | 4 |
+| Protocol Tests | ✅ Complete | 5 |
+| Catalog Tests | ✅ Complete | 5 |
+| Performance Tests | ✅ Complete | 6 |
+| TPC-C Benchmark | ✅ Complete | 5 transactions |
+| TPC-H Benchmark | ✅ Complete | 4 queries |
+| Fault Tolerance | ✅ Complete | 9 |
+| Engine Differential | ✅ Complete | 33 |
+| System Info | ✅ Complete | Auto-collect |
+| **Total** | **✅ Ready** | **12,200+** |
 
 ## Quick Start
 
 ### Prerequisites
+
 - Docker 20.10+
 - Docker Compose 2.0+
-- Python 3.11+ (for local result analysis)
-- Local clones of upstream test repositories:
-  - `~/CliWork/fbt-repository/` - Firebird Test Suite
-  - `~/CliWork/mysql-server/` - MySQL source (with mysql-test)
-  - `~/CliWork/postgresql/` - PostgreSQL source (with pg_regress)
+- Python 3.8+ (for local analysis)
+- 8GB+ RAM recommended for large-scale tests
 
 ### Start All Engines
+
 ```bash
+# Clone repository
+git clone https://github.com/DaltonCalford/ScratchBird-Benchmarks.git
+cd ScratchBird-Benchmarks
+
 # Start all database engines
 docker-compose up -d firebird mysql postgresql
 
-# Wait for engines to be healthy (usually 30-60 seconds)
+# Wait for healthy status
 docker-compose ps
-
-# Collect version information
-./scripts/collect-all-versions.sh ./results
 ```
 
-### Run Upstream Regression Tests
-
-The benchmark suite can run the **complete upstream test suites** from each database engine:
+### Run All Tests
 
 ```bash
-# Run Firebird FBT tests against original Firebird
-docker-compose --profile fbt run --rm fbt-runner \
-  --target=original --suite=bugs --limit=100
+# Run complete test suite with system info collection
+./run-all-tests.sh all all
 
-# Run MySQL mysql-test against original MySQL
-docker-compose --profile mysql-test run --rm mysql-test-runner \
-  --target=original --suite=funcs_1 --limit=50
-
-# Run PostgreSQL regression tests
-docker-compose --profile pg-regress run --rm pg-regress-runner \
-  --target=original --schedule=parallel
+# Results saved to: ./results/full-test-suite-{timestamp}/
 ```
 
-See [regression-suites/README.md](regression-suites/README.md) for detailed documentation.
-
-### Run Performance Benchmarks
-```bash
-# Run full benchmark suite
-docker-compose up benchmark-runner
-
-# Or run specific engine tests
-./scripts/run-benchmarks.sh --engine=firebird --suite=micro
-./scripts/run-benchmarks.sh --engine=mysql --suite=concurrent
-./scripts/run-benchmarks.sh --engine=postgresql --suite=regression
-```
-
-### View Results
-```bash
-# Check version information
-cat results/version-summary.txt
-
-# View JSON results
-cat results/all-versions.json
-
-# Generate HTML comparison report (after running against both original and ScratchBird)
-python3 regression-suites/runners/compare_results.py \
-  --original=results/fbt_results_original_*.json \
-  --scratchbird=results/fbt_results_scratchbird_*.json \
-  --output=results/comparison.html
-```
-
-## Engine Versions
-
-The benchmark suite tracks exact versions of each engine:
-
-| Engine | Current Version | Image Tag |
-|--------|-----------------|-----------|
-| FirebirdSQL | 5.0.1 | `jacobalberty/firebird:v5.0.1` |
-| MySQL | 9.0.1 | `mysql:9.0.1` |
-| PostgreSQL | 18.0 | `postgres:18.0` |
-
-Version information is collected automatically and stored in:
-- `results/all-versions.json` - Full JSON metadata
-- `results/version-summary.txt` - Human-readable summary
-
-### Version Collection
-
-Each engine provides detailed version info:
-
-**FirebirdSQL:**
-- Engine version (major.minor.patch)
-- ODS (On-Disk Structure) version
-- Page size
-- Database dialect
-
-**MySQL:**
-- Server version
-- InnoDB version
-- SQL mode
-- Character set and collation
-
-**PostgreSQL:**
-- Server version
-- Block size
-- Shared buffers
-- Locale settings
-
-## Upstream Regression Tests
-
-This benchmark suite integrates with the **official upstream test suites** from each database engine:
-
-| Test Suite | Local Path | Test Count | Runner |
-|------------|------------|------------|--------|
-| Firebird FBT | `~/CliWork/fbt-repository/` | ~7,000 tests | `fbt_runner.py` |
-| MySQL mysql-test | `~/CliWork/mysql-server/mysql-test/` | ~5,000 tests | `mysql_test_runner.py` |
-| PostgreSQL pg_regress | `~/CliWork/postgresql/src/test/regress/` | ~200 tests | `pg_regress_runner.py` |
-
-### Key Principle: Use Original Test Harnesses
-
-We use the **original test formats and clients** to ensure:
-- **Auditable results** - Anyone can reproduce using upstream tools
-- **No test bias** - We're not rewriting tests to favor ScratchBird
-- **Real edge cases** - Thousands of community-discovered bugs
-
-### Running Against ScratchBird
-
-Once ScratchBird is running:
+### Run with Result Submission
 
 ```bash
-# Run Firebird FBT against ScratchBird in Firebird mode
-docker-compose --profile fbt run --rm fbt-runner \
-  --target=scratchbird --mode=firebird --suite=all
+# Submit results to project server (anonymous)
+SUBMIT=true ./run-all-tests.sh all all
 
-# Run MySQL tests against ScratchBird in MySQL mode
-docker-compose --profile mysql-test run --rm mysql-test-runner \
-  --target=scratchbird --mode=mysql --suite=all
+# With tags for categorization
+SUBMIT=true TAGS="production,aws,r5.xlarge" ./run-all-tests.sh all all
 
-# Run PostgreSQL tests against ScratchBird in PostgreSQL mode
-docker-compose --profile pg-regress run --rm pg-regress-runner \
-  --target=scratchbird --mode=postgresql --schedule=parallel
+# Authenticated submission
+SUBMIT=true API_KEY=your_api_key ./run-all-tests.sh all all
 ```
-
-### Test Result Categories
-
-| Result | Meaning |
-|--------|---------|
-| **PASS** | ScratchBird output matches original exactly |
-| **PASS_EQUIVALENT** | Output semantically equivalent (minor formatting) |
-| **FAIL_COMPAT** | Different output but acceptable (documented difference) |
-| **FAIL_BUG** | ScratchBird bug - needs fixing |
-| **SKIP_UNSUPPORTED** | Feature not supported in ScratchBird |
-
-See [regression-suites/README.md](regression-suites/README.md) for full details.
 
 ## Project Structure
 
 ```
-.
-├── engines/                    # Database engine configurations
-│   ├── firebird/              # FirebirdSQL 5.0.1
-│   ├── mysql/                 # MySQL 9.0.1
-│   ├── postgresql/            # PostgreSQL 18.0
-│   └── scratchbird/           # ScratchBird (when ready)
-├── test-suites/               # Custom test definitions
-│   ├── sql-standard/          # ANSI SQL compatibility
-│   ├── performance/           # Performance benchmarks
-│   └── concurrent/            # Concurrent workload tests
-├── regression-suites/         # Upstream test integration
-│   ├── runners/               # Test runners (fbt_runner.py, etc.)
-│   ├── config/                # Exclusion lists
-│   ├── README.md              # Detailed documentation
-│   └── run-regression-suite.sh # Orchestration script
-├── scripts/                   # Benchmark harness
-│   ├── collect-all-versions.sh
-│   ├── run-benchmarks.sh
-│   └── benchmark_runner.py
-├── results/                   # Benchmark output (git-ignored)
-└── docs/                      # Documentation
+ScratchBird-Benchmarks/
+│
+├── run-all-tests.sh                    # Master test orchestrator
+├── docker-compose.yml                  # Engine orchestration
+├── TEST_STRATEGY.md                    # Detailed test strategy
+├── TEST_COVERAGE.md                    # Complete coverage matrix
+│
+├── engines/                            # Database engine containers
+│   ├── firebird/                       # FirebirdSQL 5.0.1
+│   ├── mysql/                          # MySQL 9.0.1
+│   ├── postgresql/                     # PostgreSQL 18.0
+│   └── scratchbird/                    # Placeholder for SB
+│
+├── regression-suites/                  # Upstream compatibility tests
+│   ├── runners/
+│   │   ├── fbt_runner.py              # Firebird FBT test runner
+│   │   ├── mysql_test_runner.py       # MySQL mysql-test runner
+│   │   ├── pg_regress_runner.py       # PostgreSQL pg_regress runner
+│   │   └── compare_results.py         # Cross-engine comparison
+│   ├── config/
+│   │   ├── firebird-fbt-exclude.txt   # Known failure exclusions
+│   │   ├── mysql-test-exclude.txt
+│   │   └── postgresql-regress-exclude.txt
+│   └── run-regression-suite.sh
+│
+├── stress-tests/                       # Performance & load tests
+│   ├── generators/
+│   │   ├── data_generator.py          # Synthetic data generation
+│   │   └── sql_dialect.py             # Engine-specific SQL
+│   ├── scenarios/
+│   │   ├── join_stress_tests.py       # JOIN performance tests
+│   │   ├── bulk_operation_tests.py    # INSERT/UPDATE/DELETE stress
+│   │   └── dialect_aware_tests.py     # Dialect-specific tests
+│   ├── runners/
+│   │   ├── stress_test_runner.py
+│   │   └── dialect_stress_runner.py   # Uses native SQL dialects
+│   └── scripts/
+│       ├── run-stress-tests.sh
+│       └── run-dialect-stress-tests.sh
+│
+├── acid-tests/                         # Transaction integrity
+│   ├── scenarios/
+│   │   ├── transaction_tests.py       # ACID compliance tests
+│   │   └── concurrency_tests.py       # Locking & deadlock tests
+│   ├── runners/
+│   │   └── acid_test_runner.py
+│   └── scripts/
+│       └── run-acid-tests.sh
+│
+├── data-type-tests/                    # Edge case testing
+│   └── scenarios/
+│       └── edge_case_tests.py         # Numeric, string, datetime edge cases
+│
+├── ddl-tests/                          # Schema operations
+│   └── scenarios/
+│       └── ddl_tests.py               # CREATE, ALTER, DROP tests
+│
+├── optimizer-tests/                    # Query optimizer
+│   └── scenarios/
+│       └── optimizer_tests.py         # Plan stability, cost model
+│
+├── protocol-tests/                     # Wire protocol
+│   └── scenarios/
+│       └── protocol_tests.py          # Prepared statements, metadata
+│
+├── catalog-tests/                      # System tables
+│   └── scenarios/
+│       └── catalog_tests.py           # information_schema, pg_catalog
+│
+├── performance-tests/                  # Benchmarking
+│   └── scenarios/
+│       └── performance_tests.py       # Latency, throughput, scaling
+│
+├── tpc-c/                              # OLTP benchmark
+│   └── scenarios/
+│       └── tpc_c_workload.py          # Complete TPC-C implementation
+│
+├── tpc-h/                              # Analytics benchmark
+│   └── scenarios/
+│       └── tpc_h_queries.py           # TPC-H analytical queries
+│
+├── fault-tolerance-tests/              # Recovery testing
+│   └── scenarios/
+│       └── fault_tests.py             # Crash recovery, resource exhaustion
+│
+├── engine-differential-tests/          # NEW: Architectural exploitation
+│   ├── scenarios/
+│   │   ├── mysql_optimized_tests.py   # Tests MySQL excels at
+│   │   ├── postgresql_optimized_tests.py # Tests PostgreSQL excels at
+│   │   └── firebird_optimized_tests.py   # Tests Firebird excels at
+│   ├── runners/
+│   │   └── differential_test_runner.py
+│   └── scripts/
+│       └── run-differential-tests.sh
+│
+└── system-info/                        # NEW: System collection & submission
+    ├── collectors/
+    │   └── system_info.py             # Hardware/OS detection
+    ├── submit/
+    │   └── result_submitter.py        # Result upload to server
+    └── README.md
 ```
 
-## Benchmark Categories
+## Test Suites Explained
 
-### 1. Upstream Regression Tests
-Run the complete upstream test suites:
-- **Firebird FBT** - Bug regression and functional tests
-- **MySQL mysql-test** - Official MySQL test suite
-- **PostgreSQL pg_regress** - PostgreSQL regression tests
+### 1. Regression Tests (`regression-suites/`)
 
-### 2. Compatibility Tests
-Verify ScratchBird's emulation accuracy:
-- Parse compatibility - Does SQL parse correctly?
-- Semantic compatibility - Does metadata match?
-- Behavioral compatibility - Do queries return same results?
+Runs the actual upstream test suites from each database engine:
 
-### 3. Performance Tests
-Measure and compare performance:
-- **Micro-benchmarks** - Single operations (INSERT, SELECT, UPDATE)
-- **Macro-benchmarks** - Complex queries (JOINs, aggregations)
-- **Concurrent tests** - Multi-user workloads
+- **Firebird FBT**: ~7,000 tests from Firebird Test repository
+- **MySQL mysql-test**: ~5,000 tests from MySQL source
+- **PostgreSQL pg_regress**: ~200 regression tests
 
-## Adding ScratchBird
+Uses the **original test harnesses** to ensure no test bias.
 
-When ScratchBird is ready for benchmarking:
+```bash
+# Run Firebird FBT
+docker-compose --profile fbt run --rm fbt-runner --suite=bugs
 
-1. Create `engines/scratchbird/Dockerfile`
-2. Add service to `docker-compose.yml`
-3. Implement version collection script
-4. Run regression tests to establish baseline
-5. Run comparative benchmarks
+# Run MySQL tests
+docker-compose --profile mysql-test run --rm mysql-test-runner --suite=funcs_1
 
-### ScratchBird Configuration
-
-```yaml
-scratchbird:
-  build:
-    context: ./engines/scratchbird
-  container_name: sb-benchmark-scratchbird
-  ports:
-    - "3050:3050"  # Firebird wire protocol
-    - "3306:3306"  # MySQL protocol
-    - "5432:5432"  # PostgreSQL protocol
-  environment:
-    - SB_MODE=auto  # Auto-detect from client
-    - SB_DATABASE=benchmark
-  networks:
-    - benchmark-net
+# Run PostgreSQL regress
+docker-compose --profile pg-regress run --rm pg-regress-runner --schedule=parallel
 ```
+
+### 2. Stress Tests (`stress-tests/`)
+
+Dialect-aware performance tests using each engine's native SQL:
+
+| Test Category | Count | Description |
+|--------------|-------|-------------|
+| INNER JOIN | 5 | Simple, conditions, expressions, large results |
+| OUTER JOIN | 5 | LEFT, RIGHT, FULL with aggregations |
+| CROSS JOIN | 2 | Limited cartesian, aggregated analysis |
+| SELF JOIN | 2 | Hierarchical, pairing scenarios |
+| Multi-table | 5 | 3, 4, 5 table JOINs |
+| Bulk INSERT | 3 | Single transaction, SELECT-based, aggregated |
+| Bulk UPDATE | 4 | Simple, JOIN-based, complex calculations |
+| Aggregation | 4 | Full scan, multi-dimensional, distinct counts |
+
+```bash
+# Run with native dialects
+./stress-tests/scripts/run-dialect-stress-tests.sh mysql medium
+```
+
+### 3. ACID Tests (`acid-tests/`)
+
+Transactional integrity validation:
+
+| Property | Tests | Key Scenarios |
+|----------|-------|---------------|
+| **Atomicity** | 6 | Commit/rollback, multi-table, savepoints |
+| **Consistency** | 6 | PK, FK, CHECK, UNIQUE, NOT NULL constraints |
+| **Isolation** | 5 | Dirty reads, phantom reads, lost updates |
+| **Durability** | 3 | Commit persistence, visibility |
+
+```bash
+./acid-tests/scripts/run-acid-tests.sh postgresql
+```
+
+### 4. Engine Differential Tests (`engine-differential-tests/`)
+
+Tests designed to perform very differently on each engine, exploiting architectural strengths:
+
+**MySQL Wins On:**
+- `clustered_pk_range_scan` - Sequential I/O via clustered index (5-20x)
+- `covering_index_lookup` - Index-only access (2-5x)
+- `secondary_index_insert_buffering` - Change buffer (3-10x)
+
+**PostgreSQL Wins On:**
+- `parallel_seq_scan_large_table` - Parallel workers (4-8x)
+- `gin_fulltext_search` - GIN index (50-100x)
+- `hash_join_large_tables` - O(n+m) vs O(n*m) (10-100x)
+
+**Firebird Wins On:**
+- `mga_readers_dont_block` - No read locks (10-100x)
+- `mga_rollback_performance` - Instant rollback (100-1000x)
+- `storage_compact_nulls` - Bitmap storage (30-50% smaller)
+
+```bash
+./engine-differential-tests/scripts/run-differential-tests.sh all all
+```
+
+### 5. System Information (`system-info/`)
+
+Automatically collects:
+
+- **CPU**: Model, cores, frequency, cache, flags, virtualization
+- **GPU**: Vendor, model, VRAM, CUDA support
+- **Memory**: Total/available, type (DDR4/DDR5), speed, swap
+- **Disk**: Device, filesystem, space, type (SSD/HDD/NVMe)
+- **OS**: Name, version, distribution, kernel, timezone
+- **Container**: Docker/Podman/Kubernetes detection
+- **Network**: Hostname, IP, MAC address
+
+```bash
+# Collect system info
+python3 system-info/collectors/system_info.py --output system.json
+
+# Submit results
+python3 system-info/submit/result_submitter.py \
+  --benchmark results/test.json \
+  --system-info system.json \
+  --tags production,aws
+```
+
+## Usage Examples
+
+### Test Individual Engines
+
+```bash
+# Test only MySQL
+./run-all-tests.sh all mysql
+
+# Test only ACID compliance on PostgreSQL
+./run-all-tests.sh acid postgresql
+
+# Test only TPC-C on all engines
+./run-all-tests.sh tpc-c all
+```
+
+### Compare Engine Performance
+
+```bash
+# Run stress tests on all engines
+for engine in firebird mysql postgresql; do
+    ./stress-tests/scripts/run-dialect-stress-tests.sh $engine medium
+done
+
+# Generate comparison report
+python3 stress-tests/scripts/compare-stress-results.py \
+  --results-dir ./results/ \
+  --output ./comparison.html
+```
+
+### Test ScratchBird (When Ready)
+
+```bash
+# Test ScratchBird in Firebird mode
+./run-all-tests.sh all firebird
+# (Tests connect to scratchbird:3050, use Firebird dialect)
+
+# Test ScratchBird in MySQL mode
+./run-all-tests.sh all mysql
+# (Tests connect to scratchbird:3306, use MySQL dialect)
+
+# Test ScratchBird in PostgreSQL mode
+./run-all-tests.sh all postgresql
+# (Tests connect to scratchbird:5432, use PostgreSQL dialect)
+```
+
+## Interpreting Results
+
+### Result Files
+
+Each test suite generates JSON results:
+
+```json
+{
+  "metadata": {
+    "engine": "postgresql",
+    "suite": "acid",
+    "timestamp": "20240308_143022",
+    "system_info": { ... }
+  },
+  "results": {
+    "atomicity": {"passed": 6, "failed": 0},
+    "consistency": {"passed": 6, "failed": 0},
+    "isolation": {"passed": 5, "failed": 0},
+    "durability": {"passed": 3, "failed": 0}
+  },
+  "summary": {
+    "total_tests": 20,
+    "passed": 20,
+    "failed": 0,
+    "score": "100%"
+  }
+}
+```
+
+### Good ScratchBird Emulation
+
+A properly emulating ScratchBird should show:
+
+- ✅ **Similar pass/fail patterns** on regression tests
+- ✅ **Similar relative performance** on stress tests
+- ✅ **Same architectural advantages** on differential tests
+- ✅ **Identical ACID behavior** on transaction tests
+
+### Warning Signs
+
+If ScratchBird shows these patterns, emulation needs work:
+
+- ⚠️ **Uniform performance** - Same speed on all tests (generic implementation)
+- ⚠️ **Opposite patterns** - Fast where native is slow, slow where native is fast
+- ⚠️ **Missing advantages** - No exploitation of engine-specific features
 
 ## CI/CD Integration
 
-GitHub Actions workflow (`.github/workflows/benchmark.yml`):
+### GitHub Actions
 
 ```yaml
-name: Weekly Benchmark
-on:
-  schedule:
-    - cron: '0 0 * * 0'  # Weekly on Sunday
-  workflow_dispatch:
+name: Benchmark & Submit
+on: [push, pull_request]
 
 jobs:
-  regression-tests:
+  benchmark:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -256,80 +397,101 @@ jobs:
       - name: Start engines
         run: docker-compose up -d firebird mysql postgresql
       
-      - name: Run Firebird FBT
-        run: |
-          docker-compose --profile fbt run --rm fbt-runner \
-            --target=original --suite=all --output-dir=/results
+      - name: Run benchmarks
+        run: ./run-all-tests.sh all all
+        env:
+          SUBMIT: true
+          API_KEY: ${{ secrets.SCRATCHBIRD_API_KEY }}
+          TAGS: "ci,github-actions,${{ matrix.os }}"
       
-      - name: Run MySQL Tests
-        run: |
-          docker-compose --profile mysql-test run --rm mysql-test-runner \
-            --target=original --suite=all --output-dir=/results
-      
-      - name: Run PostgreSQL Tests
-        run: |
-          docker-compose --profile pg-regress run --rm pg-regress-runner \
-            --target=original --schedule=parallel --output-dir=/results
-      
-      - name: Upload results
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: regression-results
+          name: benchmark-results
           path: results/
 ```
 
-## Interpreting Results
+### GitLab CI
 
-Each benchmark run produces:
-
-1. **Version metadata** - Exact engine versions tested
-2. **Test results** - Pass/fail status for each test
-3. **Performance metrics** - Timing, throughput, resource usage
-4. **Comparison reports** - Original vs ScratchBird differences
-
-### Regression Test Comparison
-
-Results show how ScratchBird compares to original engines:
-
-```
-Test Suite: Firebird FBT (1,000 tests sampled)
-┌───────────────┬──────────┬─────────────┐
-│ Category      │ Count    │ Percentage  │
-├───────────────┼──────────┼─────────────┤
-│ PASS          │ 847      │ 84.7%       │
-│ PASS_EQUIVALENT│ 89      │ 8.9%        │
-│ FAIL_BUG      │ 42       │ 4.2%        │
-│ SKIP_UNSUPPORTED│ 22     │ 2.2%        │
-└───────────────┴──────────┴─────────────┘
-Success Rate: 93.6%
+```yaml
+benchmark:
+  script:
+    - docker-compose up -d firebird mysql postgresql
+    - ./run-all-tests.sh all all
+  variables:
+    SUBMIT: "true"
+    API_KEY: $SCRATCHBIRD_API_KEY
+    TAGS: "ci,gitlab,production"
+  artifacts:
+    paths:
+      - results/
 ```
 
-### Performance Comparison
+## Architecture
 
-Results are normalized to show relative performance:
+### Container Strategy
 
 ```
-Operation         | Firebird | MySQL | PostgreSQL | ScratchBird-FB
-------------------|----------|-------|------------|---------------
-Single INSERT     | 1.00x    | 0.95x | 0.88x      | 0.92x
-Point SELECT      | 1.00x    | 1.12x | 1.05x      | 0.98x
-Simple JOIN       | 1.00x    | 0.89x | 1.15x      | 0.94x
+┌─────────────────────────────────────────────────────────────┐
+│                    Test Orchestrator                        │
+│         (Python harness with engine clients)                │
+└────────────────────┬────────────────────────────────────────┘
+                     │
+         ┌───────────┼───────────┐
+         ▼           ▼           ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │Firebird │ │  MySQL  │ │PostgreSQL│
+   │  5.0.1  │ │  9.0.1  │ │  18.0   │
+   └─────────┘ └─────────┘ └─────────┘
+         │           │           │
+         ▼           ▼           ▼
+   ┌─────────┐ ┌─────────┐ ┌─────────┐
+   │ScratchBird│Firebird │   MySQL   │
+   │Firebird │ │  Mode   │ │  Mode   │
+   │  Mode   │ └─────────┘ └─────────┘
+   └─────────┘
 ```
 
-A value of `0.92x` means ScratchBird-Firebird mode is 92% as fast as native Firebird (8% overhead).
+### Dialect Awareness
+
+Each engine is tested with its **native SQL dialect**:
+
+| Feature | Firebird | MySQL | PostgreSQL |
+|---------|----------|-------|------------|
+| String concat | `\|\|` | `CONCAT()` | `\|\|` |
+| LIMIT | `ROWS 1 TO n` | `LIMIT offset,count` | `LIMIT n OFFSET offset` |
+| Date truncation | Extract/reconstruct | `DATE_FORMAT()` | `DATE_TRUNC()` |
+| Placeholders | `?` | `%s` | `%s` |
+| Boolean | `1/0` | `TRUE/FALSE` | `TRUE/FALSE` |
+
+This ensures fair comparison - each engine uses its optimal syntax.
 
 ## Contributing
 
 1. Fork the repository
-2. Add test cases to `test-suites/` or upstream test integrations
-3. Ensure tests run in containers
-4. Submit pull request with results
+2. Create a feature branch (`git checkout -b feature/amazing-test`)
+3. Add your test to the appropriate suite
+4. Ensure tests run in containers
+5. Submit a pull request with baseline results
+
+See [TEST_STRATEGY.md](TEST_STRATEGY.md) for detailed guidelines.
 
 ## License
 
 Initial Developer's Public License Version 1.0 (IDPL) - Same as ScratchBird
 
+## Links
+
+- **Repository**: https://github.com/DaltonCalford/ScratchBird-Benchmarks
+- **ScratchBird Project**: [Link when available]
+- **Test Results Dashboard**: https://benchmarks.scratchbird.io
+- **Issue Tracker**: https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues
+
 ## Contact
 
-- Issues: [GitHub Issues](https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues)
-- Discussions: [GitHub Discussions](https://github.com/DaltonCalford/ScratchBird-Benchmarks/discussions)
+- **Issues**: [GitHub Issues](https://github.com/DaltonCalford/ScratchBird-Benchmarks/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/DaltonCalford/ScratchBird-Benchmarks/discussions)
+
+---
+
+**Status**: ✅ **12,200+ tests ready for ScratchBird validation**
