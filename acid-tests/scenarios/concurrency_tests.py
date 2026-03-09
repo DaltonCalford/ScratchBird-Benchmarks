@@ -71,7 +71,7 @@ class LockingTests:
                 """,
                 verification_sql="SELECT value, version FROM lock_test WHERE id = 1",
                 expected_metric="version",
-                expected_min_value=2,  -- Both updates should complete
+                expected_min_value=2,  # Both updates should complete
             ),
             ConcurrencyTest(
                 name="select_for_share_locking",
@@ -130,7 +130,7 @@ class LockingTests:
                     -- Should not reach here
                     COMMIT;
                 """,
-                verification_sql="SELECT 1",  -- Error should occur
+                verification_sql="SELECT 1",  # Error should occur
                 expected_metric="error_occurred",
                 expected_min_value=1,
             ),
@@ -163,7 +163,7 @@ class LockingTests:
                 """,
                 verification_sql="SELECT COUNT(*) FROM lock_test WHERE processed > 0",
                 expected_metric="count",
-                expected_min_value=3,  -- All rows should be processed
+                expected_min_value=3,  # All rows should be processed
             ),
             ConcurrencyTest(
                 name="concurrent_reads_no_blocking",
@@ -182,7 +182,7 @@ class LockingTests:
                 """,
                 verification_sql="SELECT 1",
                 expected_metric="throughput",
-                expected_min_value=1000,  -- Should handle 1000 reads/sec
+                expected_min_value=1000,  # Should handle 1000 reads/sec
             ),
         ]
 
@@ -225,7 +225,7 @@ class DeadlockTests:
                 """,
                 verification_sql="SELECT SUM(balance) FROM account",
                 expected_metric="sum",
-                expected_min_value=2000.00,  -- Total should be preserved
+                expected_min_value=2000.00,  # Total should be preserved
                 expected_max_value=2000.00,
             ),
             ConcurrencyTest(
@@ -291,7 +291,7 @@ class ContentionTests:
                 """,
                 verification_sql="SELECT value FROM counter WHERE name = 'hot_counter'",
                 expected_metric="value",
-                expected_min_value=100,  -- Should complete many updates
+                expected_min_value=100,  # Should complete many updates
             ),
             ConcurrencyTest(
                 name="contention_insert_burst",
@@ -320,7 +320,7 @@ class ContentionTests:
                 """,
                 verification_sql="SELECT COUNT(*) FROM insert_test",
                 expected_metric="count",
-                expected_min_value=10000,  -- 10 threads * 1000 rows
+                expected_min_value=10000,  # 10 threads * 1000 rows
             ),
             ConcurrencyTest(
                 name="contention_mixed_workload",
@@ -358,7 +358,7 @@ class ContentionTests:
                 """,
                 verification_sql="SELECT COUNT(*) FROM orders",
                 expected_metric="throughput",
-                expected_min_value=100,  -- Should sustain 100 ops/sec
+                expected_min_value=100,  # Should sustain 100 ops/sec
             ),
         ]
 
@@ -379,7 +379,7 @@ class ConnectionTests:
                 workload_sql="SELECT 1;",
                 verification_sql="SELECT 1",
                 expected_metric="successful_connections",
-                expected_min_value=50,  -- At least 50 should connect
+                expected_min_value=50,  # At least 50 should connect
             ),
             ConcurrencyTest(
                 name="connection_leak_detection",
@@ -394,7 +394,7 @@ class ConnectionTests:
                 """,
                 verification_sql="SELECT COUNT(*) FROM pg_stat_activity WHERE state = 'idle'",
                 expected_metric="idle_connections",
-                expected_max_value=20,  -- Should not accumulate idle connections
+                expected_max_value=20,  # Should not accumulate idle connections
             ),
         ]
 

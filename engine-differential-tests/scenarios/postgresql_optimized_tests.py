@@ -269,7 +269,7 @@ Firebird: No range type support.
 CREATE TABLE reservations (
     id SERIAL PRIMARY KEY,
     room_id INT,
-    during TSTZRANGE,  -- PostgreSQL range type
+    during TSTZRANGE,  # PostgreSQL range type
     guest_name TEXT
 );
 
@@ -363,7 +363,7 @@ CREATE TABLE orders_with_status (
     order_id BIGSERIAL PRIMARY KEY,
     customer_id INT,
     order_date TIMESTAMP,
-    status VARCHAR(20),  -- 'active', 'completed', 'cancelled'
+    status VARCHAR(20),  # 'active', 'completed', 'cancelled'
     total_amount DECIMAL(12,2)
 );
 

@@ -1,0 +1,16 @@
+{
+  "metadata": {
+    "target": "original",
+    "mode": "firebird",
+    "timestamp": "20260309_184550",
+    "fbt_path": "/fbt-repository"
+  },
+  "summary": {
+    "total": 0,
+    "passed": 0,
+    "failed": 0,
+    "skipped": 0,
+    "errors": 0
+  },
+  "results": []
+}

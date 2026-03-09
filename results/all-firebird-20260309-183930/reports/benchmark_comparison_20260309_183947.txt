@@ -1,0 +1,47 @@
+======================================================================
+SCRATCHBIRD BENCHMARK COMPARISON REPORT
+======================================================================
+
+ENGINE COMPARISON
+----------------------------------------------------------------------
+Engine          Suite           Total    Passed   Failed   Score     
+----------------------------------------------------------------------
+Unknown         Unknown         0        0        0        N/A       
+firebird        performance     0        0        0        N/A       
+firebird        tpc-c           0        0        0        N/A       
+firebird        tpc-h           0        0        0        N/A       
+
+DETAILED BREAKDOWN
+----------------------------------------------------------------------
+
+UNKNOWN
+  Total Tests: N/A
+  Passed:      0
+  Failed:      0
+  Errors:      0
+  Score:       N/A
+
+FIREBIRD
+  Total Tests: 0
+  Passed:      0
+  Failed:      0
+  Errors:      N/A
+  Score:       N/A
+
+FIREBIRD
+  Total Tests: 0
+  Passed:      0
+  Failed:      0
+  Errors:      N/A
+  Score:       N/A
+
+FIREBIRD
+  Total Tests: 0
+  Passed:      0
+  Failed:      0
+  Errors:      N/A
+  Score:       N/A
+
+======================================================================
+END OF COMPARISON REPORT
+======================================================================

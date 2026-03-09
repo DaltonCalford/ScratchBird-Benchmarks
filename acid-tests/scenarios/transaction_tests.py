@@ -199,7 +199,7 @@ class ConsistencyTests:
                     DELETE FROM parent;
                     INSERT INTO parent VALUES (1);
                 """,
-                test_sql="INSERT INTO child VALUES (1, 999)",  -- Invalid parent_id
+                test_sql="INSERT INTO child VALUES (1, 999)",  # Invalid parent_id
                 verification_sql="SELECT COUNT(*) FROM child",
                 expected_result=0,
             ),
@@ -264,7 +264,7 @@ class ConsistencyTests:
                     );
                     DELETE FROM ledger;
                 """,
-                test_sql="INSERT INTO ledger VALUES (1, 1, -100, 0)",  -- Negative debit
+                test_sql="INSERT INTO ledger VALUES (1, 1, -100, 0)",  # Negative debit
                 verification_sql="SELECT COUNT(*) FROM ledger",
                 expected_result=0,
             ),
@@ -290,7 +290,7 @@ class IsolationTests:
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 100);
                 """,
-                test_sql="-- Concurrent test required",  # Requires 2 connections
+                test_sql="# Concurrent test required",  # Requires 2 connections
                 verification_sql="SELECT value FROM isolation_test WHERE id = 1",
                 expected_result=100,
             ),
@@ -307,7 +307,7 @@ class IsolationTests:
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 100);
                 """,
-                test_sql="-- Concurrent test required",
+                test_sql="# Concurrent test required",
                 verification_sql="SELECT value FROM isolation_test WHERE id = 1",
                 expected_result=100,
             ),
@@ -326,7 +326,7 @@ class IsolationTests:
                     INSERT INTO isolation_test VALUES (1, 'A', 100);
                     INSERT INTO isolation_test VALUES (2, 'A', 200);
                 """,
-                test_sql="-- Concurrent test required",
+                test_sql="# Concurrent test required",
                 verification_sql="SELECT COUNT(*) FROM isolation_test WHERE category = 'A'",
                 expected_result=2,
             ),
@@ -343,7 +343,7 @@ class IsolationTests:
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 0);
                 """,
-                test_sql="-- Concurrent test required",
+                test_sql="# Concurrent test required",
                 verification_sql="SELECT counter FROM isolation_test WHERE id = 1",
                 expected_result=100,  # After 100 concurrent increments
             ),
@@ -354,8 +354,8 @@ class IsolationTests:
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS isolation_test (id INT);
                 """,
-                test_sql="-- Check current isolation level",
-                verification_sql="-- Engine-specific isolation level check",
+                test_sql="# Check current isolation level",
+                verification_sql="# Engine-specific isolation level check",
                 expected_result="READ COMMITTED",
             ),
         ]

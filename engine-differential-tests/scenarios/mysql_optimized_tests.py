@@ -425,7 +425,7 @@ WHERE id = ?;
 CREATE TABLE wide_table (
     id INT PRIMARY KEY AUTO_INCREMENT,
     lookup_key INT NOT NULL,
-    large_payload TEXT,  -- Not in secondary index
+    large_payload TEXT,  # Not in secondary index
     INDEX idx_lookup (lookup_key)
 ) ENGINE=InnoDB;
 

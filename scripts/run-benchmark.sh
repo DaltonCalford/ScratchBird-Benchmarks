@@ -11,6 +11,15 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+# Use virtual environment Python if available
+if [ -n "$VIRTUAL_ENV" ]; then
+    PYTHON="$VIRTUAL_ENV/bin/python3"
+elif [ -f "$PROJECT_DIR/.venv/bin/python3" ]; then
+    PYTHON="$PROJECT_DIR/.venv/bin/python3"
+else
+    PYTHON="$PYTHON"
+fi
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -29,24 +38,24 @@ check_python_deps() {
     local missing=()
     
     # Check for psutil (system info)
-    if ! python3 -c "import psutil" 2>/dev/null; then
+    if ! $PYTHON -c "import psutil" 2>/dev/null; then
         missing+=("psutil")
     fi
     
     # Check for engine-specific modules
     case "$engine" in
         firebird)
-            if ! python3 -c "import fdb" 2>/dev/null; then
+            if ! $PYTHON -c "import fdb" 2>/dev/null; then
                 missing+=("fdb")
             fi
             ;;
         mysql)
-            if ! python3 -c "import pymysql" 2>/dev/null && ! python3 -c "import mysql.connector" 2>/dev/null; then
+            if ! $PYTHON -c "import pymysql" 2>/dev/null && ! $PYTHON -c "import mysql.connector" 2>/dev/null; then
                 missing+=("pymysql or mysql-connector-python")
             fi
             ;;
         postgresql)
-            if ! python3 -c "import psycopg2" 2>/dev/null; then
+            if ! $PYTHON -c "import psycopg2" 2>/dev/null; then
                 missing+=("psycopg2-binary")
             fi
             ;;
@@ -177,7 +186,7 @@ collect_system_info() {
     log_section "Collecting System Information"
     
     if command -v python3 &> /dev/null; then
-        python3 "$PROJECT_DIR/system-info/collectors/system_info.py" \
+        $PYTHON "$PROJECT_DIR/system-info/collectors/system_info.py" \
             --output "$output_dir/system-info.json" \
             --quiet 2>/dev/null || log_warn "System info collection failed"
         
@@ -201,7 +210,7 @@ run_regression_tests() {
             if [ -d "$PROJECT_DIR/regression-suites" ]; then
                 # Run FBT runner if available
                 if [ -f "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" ]; then
-                    python3 "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" \
+                    $PYTHON "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" \
                         --fbt-path /fbt-repository \
                         --suite all \
                         --target original \
@@ -229,7 +238,7 @@ run_stress_tests() {
     log_section "Running Stress Tests"
     
     if [ -f "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" ]; then
-        python3 "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" \
+        $PYTHON "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -250,7 +259,7 @@ run_acid_tests() {
     log_section "Running ACID Tests"
     
     if [ -f "$PROJECT_DIR/acid-tests/runners/acid_test_runner.py" ]; then
-        python3 "$PROJECT_DIR/acid-tests/runners/acid_test_runner.py" \
+        $PYTHON "$PROJECT_DIR/acid-tests/runners/acid_test_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -270,7 +279,7 @@ run_performance_tests() {
     log_section "Running Performance Tests"
     
     if [ -f "$PROJECT_DIR/performance-tests/runners/performance_test_runner.py" ]; then
-        python3 "$PROJECT_DIR/performance-tests/runners/performance_test_runner.py" \
+        $PYTHON "$PROJECT_DIR/performance-tests/runners/performance_test_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -290,7 +299,7 @@ run_tpc_c() {
     log_section "Running TPC-C Benchmark"
     
     if [ -f "$PROJECT_DIR/tpc-c/runners/tpc_c_runner.py" ]; then
-        python3 "$PROJECT_DIR/tpc-c/runners/tpc_c_runner.py" \
+        $PYTHON "$PROJECT_DIR/tpc-c/runners/tpc_c_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -312,7 +321,7 @@ run_tpc_h() {
     log_section "Running TPC-H Benchmark"
     
     if [ -f "$PROJECT_DIR/tpc-h/runners/tpc_h_runner.py" ]; then
-        python3 "$PROJECT_DIR/tpc-h/runners/tpc_h_runner.py" \
+        $PYTHON "$PROJECT_DIR/tpc-h/runners/tpc_h_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -333,7 +342,7 @@ run_engine_differential() {
     log_section "Running Engine Differential Tests"
     
     if [ -f "$PROJECT_DIR/engine-differential-tests/runners/differential_test_runner.py" ]; then
-        python3 "$PROJECT_DIR/engine-differential-tests/runners/differential_test_runner.py" \
+        $PYTHON "$PROJECT_DIR/engine-differential-tests/runners/differential_test_runner.py" \
             --engine "$engine" \
             --host localhost \
             --port $(get_engine_port "$engine") \
@@ -384,7 +393,7 @@ generate_report() {
             format_args="$format_args --notes '$notes'"
         fi
         
-        python3 "$PROJECT_DIR/system-info/submit/result_formatter.py" $format_args || log_warn "Report generation failed"
+        $PYTHON "$PROJECT_DIR/system-info/submit/result_formatter.py" $format_args || log_warn "Report generation failed"
         
         if [ -d "$output_dir/reports" ]; then
             log_success "Reports saved to $output_dir/reports/"

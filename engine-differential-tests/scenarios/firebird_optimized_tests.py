@@ -300,7 +300,7 @@ PostgreSQL: Index tuples have overhead, less compression.
                 setup_sql="""
 CREATE TABLE repetitive_data (
     id INTEGER PRIMARY KEY,
-    prefix VARCHAR(50),  -- Values like 'USA-NY-001', 'USA-NY-002'
+    prefix VARCHAR(50),  # Values like 'USA-NY-001', 'USA-NY-002'
     suffix VARCHAR(20)
 );
 

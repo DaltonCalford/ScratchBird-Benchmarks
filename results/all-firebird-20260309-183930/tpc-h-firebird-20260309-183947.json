@@ -1,0 +1,19 @@
+{
+  "metadata": {
+    "engine": "firebird",
+    "suite": "tpc-h",
+    "timestamp": "2026-03-09T18:39:47.564360",
+    "scale_factor": 1,
+    "host": "localhost"
+  },
+  "results": {
+    "status": "placeholder",
+    "message": "TPC-H benchmark not yet fully implemented"
+  },
+  "summary": {
+    "total_tests": 0,
+    "passed": 0,
+    "failed": 0,
+    "score": "N/A"
+  }
+}
