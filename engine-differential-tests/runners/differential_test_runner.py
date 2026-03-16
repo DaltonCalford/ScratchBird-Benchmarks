@@ -13,6 +13,7 @@ Results help validate ScratchBird's emulation choices.
 """
 
 import argparse
+import os
 import json
 import sys
 import time
@@ -54,6 +55,7 @@ class EngineConnection:
         self.password = password
         self.connection = None
         self.cursor = None
+        self._query_timeout_ms = int(os.getenv("SCRATCHBIRD_PG_QUERY_TIMEOUT_MS", "30000"))
         self._connect()
     
     def _connect(self):
@@ -72,10 +74,17 @@ class EngineConnection:
             )
         elif self.engine == "postgresql":
             import psycopg2
-            self.connection = psycopg2.connect(
-                host=self.host, port=self.port, dbname=self.database,
-                user=self.user, password=self.password
-            )
+            connect_kwargs = {
+                "host": self.host,
+                "port": self.port,
+                "dbname": self.database,
+                "user": self.user,
+                "password": self.password,
+            }
+            if self._query_timeout_ms > 0:
+                # Set at connection startup so timeout persists across transaction boundaries.
+                connect_kwargs["options"] = f"-c statement_timeout={self._query_timeout_ms}"
+            self.connection = psycopg2.connect(**connect_kwargs)
             self.connection.autocommit = False
         else:
             raise ValueError(f"Unsupported engine: {self.engine}")
@@ -91,7 +100,10 @@ class EngineConnection:
     
     def commit(self):
         self.connection.commit()
-    
+
+    def rollback(self):
+        self.connection.rollback()
+
     def close(self):
         if self.cursor:
             self.cursor.close()

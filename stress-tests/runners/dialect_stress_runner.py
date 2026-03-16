@@ -201,11 +201,11 @@ class DialectStressTestRunner:
         """Create database schema using dialect-specific SQL."""
         print(f"\nCreating schema using {self.engine} dialect...")
         
-        # Drop existing tables
+        # Drop existing tables in dependency-safe order.
         tables = ["order_items", "orders", "products", "customers"]
         for table in tables:
             try:
-                self.db.execute(f"DROP TABLE IF EXISTS {table}")
+                self.db.execute(f"DROP TABLE {table}")
                 self.db.commit()
             except:
                 pass

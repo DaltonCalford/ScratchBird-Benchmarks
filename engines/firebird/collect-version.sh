@@ -19,7 +19,7 @@ export ISC_PASSWORD=benchmark
 # Check if benchmark database exists, if not create it
 if [ ! -f "/firebird/data/${FIREBIRD_DATABASE}" ]; then
     echo "Creating benchmark database..."
-    $FIREBIRD_HOME/bin/isql -user benchmark -password benchmark <<EOF
+    $FIREBIRD_HOME/bin/isql -user SYSDBA -password masterkey <<EOF
 CREATE DATABASE '/firebird/data/${FIREBIRD_DATABASE}' USER 'benchmark' PASSWORD 'benchmark';
 COMMIT;
 EOF

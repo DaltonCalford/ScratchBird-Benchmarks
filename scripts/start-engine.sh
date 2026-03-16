@@ -24,6 +24,45 @@ log_error() { echo -e "${RED}[FAIL]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_section() { echo -e "\n${CYAN}========================================${NC}"; echo -e "${CYAN}$1${NC}"; echo -e "${CYAN}========================================${NC}\n"; }
 
+is_port_in_use() {
+    local candidate="$1"
+    ss -ltn | awk '{print $4}' | grep -Eq "(:|\\])${candidate}\$"
+}
+
+resolve_host_port() {
+    local default_port="$1"
+    local requested_port="${2:-}"
+    local engine="${3:-engine}"
+    local candidate
+    local attempts=0
+    local max_attempts=20
+
+    if [ -n "$requested_port" ]; then
+        candidate="$requested_port"
+    else
+        candidate="$default_port"
+    fi
+
+    candidate="${candidate//[^0-9]/}"
+    if [ -z "$candidate" ]; then
+        echo "$default_port"
+        return
+    fi
+
+    while [ "$attempts" -lt "$max_attempts" ]; do
+        if ! is_port_in_use "$candidate"; then
+            echo "$candidate"
+            return
+        fi
+
+        log_warn "$engine host port $candidate is occupied; trying next port" >&2
+        candidate=$((candidate + 1))
+        attempts=$((attempts + 1))
+    done
+
+    echo "$default_port"
+}
+
 show_help() {
     cat << EOF
 Start a Single Database Engine for Benchmarks
@@ -76,10 +115,11 @@ check_docker() {
 
 stop_all_engines() {
     # Stop any other running benchmark engines to ensure isolation
-    for container in sb-benchmark-firebird sb-benchmark-mysql sb-benchmark-postgresql; do
-        if docker ps | grep -q "$container"; then
-            log_info "Stopping $container for isolation..."
-            docker stop "$container" &> /dev/null || true
+    local container_name
+    for container_name in sb-benchmark-firebird sb-benchmark-mysql sb-benchmark-postgresql; do
+        if docker ps | grep -q "$container_name"; then
+            log_info "Stopping $container_name for isolation..."
+            docker stop "$container_name" &> /dev/null || true
         fi
     done
 }
@@ -95,6 +135,15 @@ stop_engine() {
     else
         log_warn "$engine is not running"
     fi
+}
+
+write_engine_port_file() {
+    local engine="$1"
+    local port_value="$2"
+    local port_file="$PROJECT_DIR/.benchmark-engine-ports/${engine}.env"
+
+    mkdir -p "$PROJECT_DIR/.benchmark-engine-ports"
+    printf 'BENCHMARK_%s_PORT=%s\n' "$(printf "%s" "$engine" | tr '[:lower:]' '[:upper:]')" "$port_value" > "$port_file"
 }
 
 build_engine() {
@@ -122,11 +171,18 @@ build_engine() {
 start_engine() {
     local engine="$1"
     local container="sb-benchmark-$engine"
+    local results_dir="${BENCHMARK_RESULTS_DIR:-$PROJECT_DIR/results}"
+    local port
     
     log_section "Starting $engine"
     
-    # Create results directory
-    mkdir -p "$PROJECT_DIR/results"
+    # Create and expose a writable results directory for in-container health checks.
+    mkdir -p "$results_dir"
+    chmod a+rwX "$results_dir"
+    rm -f \
+        "$results_dir/firebird-version.json" \
+        "$results_dir/mysql-version.json" \
+        "$results_dir/postgresql-version.json"
     
     # Stop all other engines first (isolation)
     stop_all_engines
@@ -149,47 +205,65 @@ start_engine() {
     # Start the specific engine
     case "$engine" in
         firebird)
+            port=$(resolve_host_port "${BENCHMARK_FIREBIRD_PORT:-3050}" "$BENCHMARK_FIREBIRD_PORT" "firebird")
+            write_engine_port_file "firebird" "$port"
             docker run -d \
                 --name "$container" \
                 --network benchmark-net \
-                -p 3050:3050 \
+                -p "$port:3050" \
                 -e FIREBIRD_DATABASE=benchmark.fdb \
                 -e FIREBIRD_USER=benchmark \
                 -e FIREBIRD_PASSWORD=benchmark \
-                -v "$PROJECT_DIR/results:/benchmark-results" \
+                -v "$results_dir:/benchmark-results" \
                 --memory="2g" \
                 --cpus="2" \
                 sb-benchmark-firebird:latest
-            log_success "Firebird started on port 3050"
+            log_success "Firebird started on host port $port (container 3050)"
             ;;
         mysql)
+            port=$(resolve_host_port "${BENCHMARK_MYSQL_PORT:-3306}" "$BENCHMARK_MYSQL_PORT" "mysql")
+            write_engine_port_file "mysql" "$port"
             docker run -d \
                 --name "$container" \
                 --network benchmark-net \
-                -p 3306:3306 \
+                -p "$port:3306" \
                 -e MYSQL_ROOT_PASSWORD=rootpassword \
                 -e MYSQL_DATABASE=benchmark \
                 -e MYSQL_USER=benchmark \
                 -e MYSQL_PASSWORD=benchmark \
-                -v "$PROJECT_DIR/results:/benchmark-results" \
+                -v "$results_dir:/benchmark-results" \
                 --memory="2g" \
                 --cpus="2" \
                 sb-benchmark-mysql:latest
-            log_success "MySQL started on port 3306"
+            log_success "MySQL started on host port $port (container 3306)"
             ;;
         postgresql)
+            port=$(resolve_host_port "${BENCHMARK_POSTGRESQL_PORT:-5432}" "$BENCHMARK_POSTGRESQL_PORT" "postgresql")
+            write_engine_port_file "postgresql" "$port"
             docker run -d \
                 --name "$container" \
                 --network benchmark-net \
-                -p 5432:5432 \
+                -p "$port:5432" \
                 -e POSTGRES_USER=benchmark \
                 -e POSTGRES_PASSWORD=benchmark \
                 -e POSTGRES_DB=benchmark \
-                -v "$PROJECT_DIR/results:/benchmark-results" \
+                -v "$results_dir:/benchmark-results" \
                 --memory="2g" \
                 --cpus="2" \
                 sb-benchmark-postgresql:latest
-            log_success "PostgreSQL started on port 5432"
+            log_success "PostgreSQL started on host port $port (container 5432)"
+            ;;
+    esac
+
+    case "$engine" in
+        firebird)
+            export BENCHMARK_FIREBIRD_PORT="$port"
+            ;;
+        mysql)
+            export BENCHMARK_MYSQL_PORT="$port"
+            ;;
+        postgresql)
+            export BENCHMARK_POSTGRESQL_PORT="$port"
             ;;
     esac
     
@@ -230,6 +304,14 @@ show_engine_status() {
     fi
 }
 
+get_engine_host_port() {
+    case "$1" in
+        firebird) echo "${BENCHMARK_FIREBIRD_PORT:-3050}" ;;
+        mysql) echo "${BENCHMARK_MYSQL_PORT:-3306}" ;;
+        postgresql) echo "${BENCHMARK_POSTGRESQL_PORT:-5432}" ;;
+    esac
+}
+
 show_engine_connect() {
     local engine="$1"
     
@@ -239,17 +321,17 @@ show_engine_connect() {
         firebird)
             cat << EOF
 Firebird 5.0.1:
-  Host:     localhost:3050
-  Database: benchmark.fdb
+  Host:     localhost:$(get_engine_host_port firebird)
+  Database: /firebird/data/benchmark.fdb
   User:     benchmark
   Password: benchmark
   
-  Command:  isql-fb -u benchmark -p benchmark localhost:benchmark.fdb
+  Command:  isql-fb -u benchmark -p benchmark localhost:/firebird/data/benchmark.fdb
   
   Environment for tests:
     export FB_HOST=localhost
-    export FB_PORT=3050
-    export FB_DATABASE=benchmark.fdb
+    export FB_PORT=$(get_engine_host_port firebird)
+    export FB_DATABASE=/firebird/data/benchmark.fdb
     export FB_USER=benchmark
     export FB_PASSWORD=benchmark
 EOF
@@ -257,7 +339,7 @@ EOF
         mysql)
             cat << EOF
 MySQL 9.0.1:
-  Host:     localhost:3306
+  Host:     localhost:$(get_engine_host_port mysql)
   Database: benchmark
   User:     benchmark
   Password: benchmark
@@ -266,7 +348,7 @@ MySQL 9.0.1:
   
   Environment for tests:
     export MYSQL_HOST=localhost
-    export MYSQL_PORT=3306
+    export MYSQL_PORT=$(get_engine_host_port mysql)
     export MYSQL_DATABASE=benchmark
     export MYSQL_USER=benchmark
     export MYSQL_PASSWORD=benchmark
@@ -275,7 +357,7 @@ EOF
         postgresql)
             cat << EOF
 PostgreSQL 16:
-  Host:     localhost:5432
+  Host:     localhost:$(get_engine_host_port postgresql)
   Database: benchmark
   User:     benchmark
   Password: benchmark
@@ -284,7 +366,7 @@ PostgreSQL 16:
   
   Environment for tests:
     export PGHOST=localhost
-    export PGPORT=5432
+    export PGPORT=$(get_engine_host_port postgresql)
     export PGDATABASE=benchmark
     export PGUSER=benchmark
     export PGPASSWORD=benchmark

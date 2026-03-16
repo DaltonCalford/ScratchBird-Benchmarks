@@ -189,6 +189,7 @@ class TableDataGenerator:
         self.spec = spec
         self.fk_references = fk_references or {}
         self.generators: Dict[str, DataGenerator] = {}
+        self._used_values: Dict[str, set] = {}
         self._init_generators()
     
     def _init_generators(self):
@@ -213,8 +214,37 @@ class TableDataGenerator:
             if col.nullable and self.generators[col.name].rng.random() < 0.05:  # 5% NULL
                 row[col.name] = None
             else:
-                row[col.name] = self.generators[col.name].generate_value(col, row_num)
+                generated_value = self.generators[col.name].generate_value(col, row_num)
+                if col.unique:
+                    generated_value = self._ensure_unique_value(col, generated_value, row_num)
+                row[col.name] = generated_value
         return row
+
+    def _ensure_unique_value(self, col: ColumnSpec, value: Any, row_num: int) -> Any:
+        """Ensure a deterministic unique value for columns marked as unique."""
+        used = self._used_values.setdefault(col.name, set())
+        if value not in used:
+            used.add(value)
+            return value
+
+        if col.data_type in ('varchar', 'string', 'date', 'timestamp', 'datetime'):
+            candidate = f"{row_num}_{value}"
+            attempt = 0
+            while candidate in used:
+                attempt += 1
+                candidate = f"{row_num}_{attempt}_{value}"
+            if col.length:
+                candidate = str(candidate)[:col.length]
+        elif isinstance(value, int):
+            candidate = value + row_num
+        elif isinstance(value, float):
+            candidate = value + (row_num / 10.0)
+        else:
+            candidate = f"{value}_{row_num}"
+
+        # In practice, a single deterministic suffix should avoid collisions.
+        used.add(candidate)
+        return candidate
     
     def generate_rows(self, batch_size: int = 10000) -> Iterator[List[Dict[str, Any]]]:
         """Generate rows in batches for memory efficiency."""

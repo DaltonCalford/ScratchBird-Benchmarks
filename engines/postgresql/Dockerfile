@@ -12,6 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 # PostgreSQL version
 ENV PG_VERSION=16
 ENV PG_MAJOR=16
+ENV PATH=/usr/lib/postgresql/${PG_MAJOR}/bin:$PATH
 ENV PG_USER=benchmark
 ENV PG_PASSWORD=benchmark
 ENV PG_DATABASE=benchmark

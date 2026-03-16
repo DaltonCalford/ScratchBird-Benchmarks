@@ -11,14 +11,63 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 
+load_env_file() {
+    local env_file="$PROJECT_DIR/.env"
+
+    if [ -f "$env_file" ]; then
+        # shellcheck disable=SC1090
+        set -a
+        . "$env_file"
+        set +a
+    fi
+}
+
+load_env_file
+
 # Use virtual environment Python if available
 if [ -n "$VIRTUAL_ENV" ]; then
     PYTHON="$VIRTUAL_ENV/bin/python3"
 elif [ -f "$PROJECT_DIR/.venv/bin/python3" ]; then
     PYTHON="$PROJECT_DIR/.venv/bin/python3"
+elif command -v python3 >/dev/null 2>&1; then
+    PYTHON="python3"
 else
-    PYTHON="$PYTHON"
+    PYTHON="$PROJECT_DIR/.venv/bin/python3"
 fi
+
+resolve_repo_path() {
+    local default_path="$1"
+    local fallback_path="$2"
+
+    if [ -n "$default_path" ] && [ -d "$default_path" ]; then
+        echo "$default_path"
+        return
+    fi
+
+    if [ -n "$fallback_path" ] && [ -d "$fallback_path" ]; then
+        echo "$fallback_path"
+        return
+    fi
+
+    local relative_to_project
+    if [ -n "$default_path" ]; then
+        relative_to_project="$(cd "$PROJECT_DIR" && cd "$default_path" 2>/dev/null && pwd)"
+        if [ -n "$relative_to_project" ] && [ -d "$relative_to_project" ]; then
+            echo "$relative_to_project"
+            return
+        fi
+    fi
+
+    if [ -n "$fallback_path" ]; then
+        relative_to_project="$(cd "$PROJECT_DIR" && cd "$fallback_path" 2>/dev/null && pwd)"
+        if [ -n "$relative_to_project" ] && [ -d "$relative_to_project" ]; then
+            echo "$relative_to_project"
+            return
+        fi
+    fi
+
+    echo "$default_path"
+}
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -27,11 +76,103 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
+# Default clone locations for local regression test suites.
+export FIREBIRD_REPO_PATH="${FIREBIRD_REPO_PATH:-$(resolve_repo_path "../fbt-repository" "../firebird")}"
+export MYSQL_REPO_PATH="${MYSQL_REPO_PATH:-$(resolve_repo_path "../mysql-server")}"
+export POSTGRESQL_REPO_PATH="${POSTGRESQL_REPO_PATH:-$(resolve_repo_path "../postgresql")}"
+
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[PASS]${NC} $1"; }
 log_error() { echo -e "${RED}[FAIL]${NC} $1"; }
 log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_section() { echo -e "\n${CYAN}========================================${NC}"; echo -e "${CYAN}$1${NC}"; echo -e "${CYAN}========================================${NC}\n"; }
+
+validate_regression_repos() {
+    local missing=0
+
+    if [ ! -d "$FIREBIRD_REPO_PATH" ] || [ ! -d "$FIREBIRD_REPO_PATH/tests" ]; then
+        missing=1
+        log_warn "Firebird test clone not found at: $FIREBIRD_REPO_PATH"
+        log_info "Set FIREBIRD_REPO_PATH to your local fbt-repository (or firebird) clone."
+    fi
+
+    if [ ! -d "$MYSQL_REPO_PATH/mysql-test" ]; then
+        missing=1
+        log_warn "MySQL test clone not found at: $MYSQL_REPO_PATH"
+        log_info "Set MYSQL_REPO_PATH to your local mysql-server clone."
+    fi
+
+    if [ ! -d "$POSTGRESQL_REPO_PATH/src/test/regress" ]; then
+        missing=1
+        log_warn "PostgreSQL test clone not found at: $POSTGRESQL_REPO_PATH"
+        log_info "Set POSTGRESQL_REPO_PATH to your local postgresql clone."
+    fi
+
+    if [ "$missing" -ne 0 ]; then
+        return 1
+    fi
+
+    return 0
+}
+
+summarize_regression_run() {
+    local source_dir="$1"
+    local output_file="$2"
+
+    "$PYTHON" - "$source_dir" "$output_file" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+source_dir = Path(sys.argv[1])
+output_file = Path(sys.argv[2])
+
+suite_entries = []
+
+for json_file in sorted(source_dir.rglob("*.json")):
+    try:
+        data = json.loads(json_file.read_text())
+    except Exception:
+        continue
+
+    summary = data.get("summary", {})
+    suite_name = data.get("suite", data.get("engine", json_file.stem))
+
+    suite_entries.append({
+        "file": str(json_file),
+        "suite": suite_name,
+        "engine": data.get("engine"),
+        "target": data.get("target"),
+        "summary": {
+            "total": summary.get("total", 0),
+            "passed": summary.get("passed", summary.get("passed_tests", 0)),
+            "failed": summary.get("failed", summary.get("failed_tests", 0)),
+            "skipped": summary.get("skipped", summary.get("skipped_tests", 0)),
+            "errors": summary.get("errors", summary.get("error_tests", 0)),
+            "pass_rate": (summary.get("passed", 0) / summary.get("total", 1) * 100) if summary.get("total", 0) else 0.0,
+        },
+    })
+
+output = {
+    "source": str(source_dir),
+    "suites": suite_entries,
+    "totals": {
+        "total": sum(item["summary"]["total"] for item in suite_entries),
+        "passed": sum(item["summary"]["passed"] for item in suite_entries),
+        "failed": sum(item["summary"]["failed"] for item in suite_entries),
+        "skipped": sum(item["summary"]["skipped"] for item in suite_entries),
+        "errors": sum(item["summary"]["errors"] for item in suite_entries),
+    },
+}
+
+if output["totals"]["total"] > 0:
+    output["totals"]["pass_rate"] = output["totals"]["passed"] / output["totals"]["total"] * 100
+else:
+    output["totals"]["pass_rate"] = 0.0
+
+output_file.write_text(json.dumps(output, indent=2))
+PY
+}
 
 check_python_deps() {
     local engine="$1"
@@ -203,37 +344,53 @@ run_regression_tests() {
     local output_dir="$2"
     
     log_section "Running Regression Tests"
-    
-    case "$engine" in
-        firebird)
-            log_info "Running Firebird FBT tests..."
-            if [ -d "$PROJECT_DIR/regression-suites" ]; then
-                # Run FBT runner if available
-                if [ -f "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" ]; then
-                    $PYTHON "$PROJECT_DIR/regression-suites/runners/fbt_runner.py" \
-                        --fbt-path /fbt-repository \
-                        --suite all \
-                        --target original \
-                        --output-dir "$output_dir" || log_warn "FBT tests had failures"
-                else
-                    log_warn "FBT runner not found, skipping"
-                fi
-            fi
-            ;;
-        mysql)
-            log_info "Running MySQL mysql-test..."
-            log_warn "MySQL regression tests not yet implemented"
-            ;;
-        postgresql)
-            log_info "Running PostgreSQL pg_regress tests..."
-            log_warn "PostgreSQL regression tests not yet implemented"
-            ;;
-    esac
+
+    if [ ! -d "$PROJECT_DIR/regression-suites" ] || [ ! -x "$PROJECT_DIR/regression-suites/run-regression-suite.sh" ]; then
+        log_warn "Regression suite runner not found"
+        return
+    fi
+
+    validate_regression_repos || {
+        log_warn "Regression source trees are not fully configured. Set env vars and rerun."
+        return
+    }
+
+    local suite_log="$output_dir/regression-${engine}.log"
+    local suite_output_dir=""
+    local latest_dir=""
+
+    "$PROJECT_DIR/regression-suites/run-regression-suite.sh" "$engine" original > "$suite_log" 2>&1
+    local run_rc=$?
+
+    if [ $run_rc -ne 0 ]; then
+        log_warn "Regression suite reported failures for $engine"
+    fi
+
+    suite_output_dir="$(awk '/^Results:/ {print $2}' "$suite_log" | tail -n 1)"
+    if [ -z "$suite_output_dir" ] || [ ! -d "$suite_output_dir" ]; then
+        # Find the most recent regression output directory if command output is missing.
+        latest_dir=$(find "$PROJECT_DIR/results" -maxdepth 1 -type d -name "regression-*" 2>/dev/null | sort | tail -n 1)
+        suite_output_dir="$latest_dir"
+    fi
+
+    if [ -n "$suite_output_dir" ] && [ -d "$suite_output_dir" ]; then
+        mkdir -p "$output_dir/regression"
+        cp -R "$suite_output_dir" "$output_dir/regression/$engine"
+        summarize_regression_run "$output_dir/regression/$engine" "$output_dir/regression-${engine}-summary.json"
+        log_success "Regression results saved to $output_dir/regression/$engine"
+    else
+        log_warn "Could not locate regression result directory for $engine"
+    fi
+
+    if [ $run_rc -ne 0 ]; then
+        return 1
+    fi
 }
 
 run_stress_tests() {
     local engine="$1"
     local output_dir="$2"
+    local scale="${STRESS_SCALE:-medium}"
     
     log_section "Running Stress Tests"
     
@@ -245,11 +402,14 @@ run_stress_tests() {
             --database $(get_engine_database "$engine") \
             --user benchmark \
             --password benchmark \
-            --scale medium \
-            --output-dir "$output_dir" || log_warn "Stress tests had failures"
+            --scale "$scale" \
+            --output-dir "$output_dir" \
+            || { log_warn "Stress tests had failures"; return 1; }
     else
         log_warn "Stress test runner not found"
+        return 1
     fi
+    return 0
 }
 
 run_acid_tests() {
@@ -266,10 +426,13 @@ run_acid_tests() {
             --database $(get_engine_database "$engine") \
             --user benchmark \
             --password benchmark \
-            --output-dir "$output_dir" || log_warn "ACID tests had failures"
+            --output-dir "$output_dir" \
+            || { log_warn "ACID tests had failures"; return 1; }
     else
         log_warn "ACID test runner not found"
+        return 1
     fi
+    return 0
 }
 
 run_performance_tests() {
@@ -286,10 +449,13 @@ run_performance_tests() {
             --database $(get_engine_database "$engine") \
             --user benchmark \
             --password benchmark \
-            --output-dir "$output_dir" || log_warn "Performance tests had failures"
+            --output-dir "$output_dir" \
+            || { log_warn "Performance tests had failures"; return 1; }
     else
         log_warn "Performance test runner not found"
+        return 1
     fi
+    return 0
 }
 
 run_tpc_c() {
@@ -308,10 +474,13 @@ run_tpc_c() {
             --password benchmark \
             --warehouses 10 \
             --duration 300 \
-            --output-dir "$output_dir" || log_warn "TPC-C had failures"
+            --output-dir "$output_dir" \
+            || { log_warn "TPC-C had failures"; return 1; }
     else
         log_warn "TPC-C runner not found"
+        return 1
     fi
+    return 0
 }
 
 run_tpc_h() {
@@ -329,10 +498,13 @@ run_tpc_h() {
             --user benchmark \
             --password benchmark \
             --scale 1 \
-            --output-dir "$output_dir" || log_warn "TPC-H had failures"
+            --output-dir "$output_dir" \
+            || { log_warn "TPC-H had failures"; return 1; }
     else
         log_warn "TPC-H runner not found"
+        return 1
     fi
+    return 0
 }
 
 run_engine_differential() {
@@ -349,23 +521,34 @@ run_engine_differential() {
             --database $(get_engine_database "$engine") \
             --user benchmark \
             --password benchmark \
-            --output-dir "$output_dir" || log_warn "Differential tests had failures"
+            --output-dir "$output_dir" \
+            || { log_warn "Differential tests had failures"; return 1; }
     else
         log_warn "Differential test runner not found"
+        return 1
     fi
+    return 0
 }
 
 get_engine_port() {
-    case "$1" in
-        firebird) echo "3050" ;;
-        mysql) echo "3306" ;;
-        postgresql) echo "5432" ;;
+    local engine="$1"
+    local port_file="$PROJECT_DIR/.benchmark-engine-ports/${engine}.env"
+
+    if [ -f "$port_file" ]; then
+        # shellcheck disable=SC1090
+        . "$port_file"
+    fi
+
+    case "$engine" in
+        firebird) echo "${BENCHMARK_FIREBIRD_PORT:-3050}" ;;
+        mysql) echo "${BENCHMARK_MYSQL_PORT:-3306}" ;;
+        postgresql) echo "${BENCHMARK_POSTGRESQL_PORT:-5432}" ;;
     esac
 }
 
 get_engine_database() {
     case "$1" in
-        firebird) echo "benchmark.fdb" ;;
+        firebird) echo "/firebird/data/benchmark.fdb" ;;
         mysql) echo "benchmark" ;;
         postgresql) echo "benchmark" ;;
     esac
@@ -379,21 +562,45 @@ generate_report() {
     log_section "Generating Text Report"
     
     if [ -f "$PROJECT_DIR/system-info/submit/result_formatter.py" ]; then
-        local format_args="--compare $output_dir/*.json --output $output_dir/reports"
+        shopt -s nullglob
+        local result_files=()
+        local result_file
+        for result_file in "$output_dir"/*.json; do
+            local basename_file
+            basename_file="$(basename "$result_file")"
+            case "$basename_file" in
+                system-info.json|*summary.json|regression-*-summary.json)
+                    continue
+                    ;;
+            esac
+            result_files+=("$result_file")
+        done
+        shopt -u nullglob
+
+        if [ "${#result_files[@]}" -eq 0 ]; then
+            log_warn "No suite result files found for report generation in $output_dir"
+            return
+        fi
+
+        local args=(
+            --compare
+            "${result_files[@]}"
+            --output "$output_dir/reports"
+        )
         
         if [ -f "$output_dir/system-info.json" ]; then
-            format_args="$format_args --system-info $output_dir/system-info.json"
+            args+=(--system-info "$output_dir/system-info.json")
         fi
         
         if [ -n "$tags" ]; then
-            format_args="$format_args --tags $tags"
+            args+=(--tags "$tags")
         fi
         
         if [ -n "$notes" ]; then
-            format_args="$format_args --notes '$notes'"
+            args+=(--notes "$notes")
         fi
         
-        $PYTHON "$PROJECT_DIR/system-info/submit/result_formatter.py" $format_args || log_warn "Report generation failed"
+        $PYTHON "$PROJECT_DIR/system-info/submit/result_formatter.py" "${args[@]}" || log_warn "Report generation failed"
         
         if [ -d "$output_dir/reports" ]; then
             log_success "Reports saved to $output_dir/reports/"
@@ -518,37 +725,38 @@ collect_system_info "$OUTPUT_DIR"
 
 # Run tests based on suite
 START_TIME=$(date +%s)
+SUITE_FAILED=0
 
 case "$SUITE" in
     all)
-        run_regression_tests "$ENGINE" "$OUTPUT_DIR"
-        run_stress_tests "$ENGINE" "$OUTPUT_DIR"
-        run_acid_tests "$ENGINE" "$OUTPUT_DIR"
-        run_performance_tests "$ENGINE" "$OUTPUT_DIR"
-        run_tpc_c "$ENGINE" "$OUTPUT_DIR"
-        run_tpc_h "$ENGINE" "$OUTPUT_DIR"
-        run_engine_differential "$ENGINE" "$OUTPUT_DIR"
+        run_regression_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_stress_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_acid_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_performance_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_tpc_c "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_tpc_h "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_engine_differential "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     regression)
-        run_regression_tests "$ENGINE" "$OUTPUT_DIR"
+        run_regression_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     stress)
-        run_stress_tests "$ENGINE" "$OUTPUT_DIR"
+        run_stress_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     acid)
-        run_acid_tests "$ENGINE" "$OUTPUT_DIR"
+        run_acid_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     performance)
-        run_performance_tests "$ENGINE" "$OUTPUT_DIR"
+        run_performance_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     tpc-c)
-        run_tpc_c "$ENGINE" "$OUTPUT_DIR"
+        run_tpc_c "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     tpc-h)
-        run_tpc_h "$ENGINE" "$OUTPUT_DIR"
+        run_tpc_h "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     engine-differential)
-        run_engine_differential "$ENGINE" "$OUTPUT_DIR"
+        run_engine_differential "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     *)
         log_warn "Suite '$SUITE' not yet implemented, skipping"
@@ -567,3 +775,7 @@ fi
 
 # Show summary
 show_summary "$ENGINE" "$OUTPUT_DIR"
+
+if [ "$SUITE_FAILED" -ne 0 ]; then
+    exit 1
+fi

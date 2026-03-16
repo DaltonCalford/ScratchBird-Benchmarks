@@ -96,9 +96,9 @@ services:
       - ./scripts:/scripts
       - ./regression-suites:/regression-suites
       # Mount local test repositories (read-only)
-      - /home/dcalford/CliWork/fbt-repository:/fbt-repository:ro
-      - /home/dcalford/CliWork/mysql-server:/mysql-server:ro
-      - /home/dcalford/CliWork/postgresql:/postgresql:ro
+      - ${FIREBIRD_REPO_PATH:-../fbt-repository}:/fbt-repository:ro
+      - ${MYSQL_REPO_PATH:-../mysql-server}:/mysql-server:ro
+      - ${POSTGRESQL_REPO_PATH:-../postgresql}:/postgresql:ro
     networks:
       - benchmark-net
     environment:
@@ -114,7 +114,7 @@ services:
     container_name: sb-fbt-runner
     volumes:
       - ./results:/results
-      - /home/dcalford/CliWork/fbt-repository:/fbt-repository:ro
+      - ${FIREBIRD_REPO_PATH:-../fbt-repository}:/fbt-repository:ro
     networks:
       - benchmark-net
     profiles:
@@ -129,7 +129,7 @@ services:
     container_name: sb-mysql-test-runner
     volumes:
       - ./results:/results
-      - /home/dcalford/CliWork/mysql-server:/mysql-server:ro
+      - ${MYSQL_REPO_PATH:-../mysql-server}:/mysql-server:ro
     networks:
       - benchmark-net
     profiles:
@@ -144,7 +144,7 @@ services:
     container_name: sb-pg-regress-runner
     volumes:
       - ./results:/results
-      - /home/dcalford/CliWork/postgresql:/postgresql:ro
+      - ${POSTGRESQL_REPO_PATH:-../postgresql}:/postgresql:ro
     networks:
       - benchmark-net
     profiles:

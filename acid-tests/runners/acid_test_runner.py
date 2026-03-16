@@ -10,6 +10,7 @@ import json
 import sys
 import time
 import traceback
+from decimal import Decimal
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -26,7 +27,7 @@ class TestResult:
     test_name: str
     category: str
     description: str
-    status: str  # passed, failed, error, skipped
+    status: str = "not_run"  # passed, failed, error, skipped
     duration_ms: float = 0.0
     expected: Any = None
     actual: Any = None
@@ -262,6 +263,15 @@ class ACIDTestRunner:
         """Save results to JSON."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         results_file = self.output_dir / f"acid_{self.engine}_{timestamp}.json"
+
+        def _serialize_value(value: Any) -> Any:
+            if isinstance(value, Decimal):
+                return float(value)
+            if isinstance(value, dict):
+                return {k: _serialize_value(v) for k, v in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [_serialize_value(item) for item in value]
+            return value
         
         # Group by category
         categories = {}
@@ -273,8 +283,8 @@ class ACIDTestRunner:
                 'description': r.description,
                 'status': r.status,
                 'duration_ms': r.duration_ms,
-                'expected': r.expected,
-                'actual': r.actual,
+                'expected': _serialize_value(r.expected),
+                'actual': _serialize_value(r.actual),
                 'error_message': r.error_message,
             })
         
