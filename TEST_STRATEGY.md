@@ -12,6 +12,12 @@ Produce comparable, repeatable outputs across:
 
 Then use the same harness and metric model to evaluate ScratchBird in each dialect mode.
 
+The `index-comparison` lane additionally prepares the harness for:
+
+- upstream target vs upstream target comparisons by normalized index family
+- future upstream target vs ScratchBird emulation target comparisons by
+  normalized plan and verdict model
+
 ## Primary Execution Path
 
 Canonical command:
@@ -20,7 +26,7 @@ Canonical command:
 SCRATCHBIRD_PG_QUERY_TIMEOUT_MS=30000 \
 ./scripts/run-benchmark-matrix.sh \
   --engines=firebird,mysql,postgresql \
-  --suites=regression,stress,acid,performance,tpc-c,tpc-h,engine-differential \
+  --suites=regression,stress,acid,performance,tpc-c,tpc-h,engine-differential,index-comparison \
   --report --compare
 ```
 
@@ -39,6 +45,7 @@ Rationale:
 - `tpc-c`
 - `tpc-h`
 - `engine-differential`
+- `index-comparison`
 
 These are the suites used for official matrix comparisons.
 
@@ -57,6 +64,12 @@ Decisions are made using the following hierarchy:
 4. Artifact drill-down:
    - inspect source JSON indicated by `artifact.result_json`
 
+For the `index-comparison` suite, also review:
+
+- pairwise verdict artifacts in `comparison-index-comparison/`
+- normalized scenario fields such as plan family, fallback rate, and
+  order-preservation signals
+
 ## Reporting Outputs Required Per Matrix Run
 
 - `matrix-summary.json`
@@ -64,14 +77,18 @@ Decisions are made using the following hierarchy:
 - `matrix-comparison-unified.csv`
 - raw suite JSON under `<engine>/<suite>/`
 - optional text reports when `--report` and `--compare` are enabled
+- pairwise index-comparison artifacts when `index-comparison` is included
 
 ## ScratchBird Evaluation Plan
 
 1. Produce native baseline matrix output.
-2. Produce ScratchBird-mode runs using equivalent suite configuration.
-3. Generate consolidated CSV for each run set.
-4. Compare run health, correctness, and runtime by `suite + metric`.
-5. Track deltas over time in CI.
+2. Use `index-comparison` to establish per-scenario normalized upstream
+   baselines.
+3. Produce ScratchBird-mode runs using equivalent suite configuration once the
+   ScratchBird benchmark service exists.
+4. Generate consolidated CSV for each run set.
+5. Compare run health, correctness, runtime, and pairwise verdict outputs.
+6. Track deltas over time in CI.
 
 ## Quality Controls
 
@@ -79,9 +96,11 @@ Decisions are made using the following hierarchy:
 - Keep PostgreSQL differential query timeout bounded (`SCRATCHBIRD_PG_QUERY_TIMEOUT_MS`).
 - Validate artifact completeness before analysis.
 - Avoid mixing partial and complete runs in one comparison set.
+- Treat `execution_status` and `comparative_verdict` as separate concepts.
 
 ## Related Docs
 
 - [README.md](/home/dcalford/CliWork/ScratchBird-Benchmarks/README.md)
 - [docs/OPERATIONS_RUNBOOK.md](/home/dcalford/CliWork/ScratchBird-Benchmarks/docs/OPERATIONS_RUNBOOK.md)
 - [docs/REPORTS_AND_CONSOLIDATED_CSV.md](/home/dcalford/CliWork/ScratchBird-Benchmarks/docs/REPORTS_AND_CONSOLIDATED_CSV.md)
+- [index-comparison-tests/README.md](/home/dcalford/CliWork/ScratchBird-Benchmarks/index-comparison-tests/README.md)

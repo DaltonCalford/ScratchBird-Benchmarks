@@ -242,6 +242,7 @@ Suites:
   tpc-h             TPC-H analytical queries
   fault-tolerance   Fault tolerance tests
   engine-differential   Engine-specific advantage tests
+  index-comparison  Normalized index-family plan and performance tests
 
 Options:
   --report          Generate text report after tests
@@ -256,6 +257,7 @@ Examples:
   $0 postgresql acid --report        # Run ACID tests with report
   $0 firebird regression             # Run FBT regression suite
   $0 mysql tpc-c --tags production   # Run TPC-C with tags
+  $0 postgresql index-comparison     # Run normalized index tests on PostgreSQL
 
 Prerequisites:
   - Start engine first: ./start-engine.sh <engine> start
@@ -530,6 +532,30 @@ run_engine_differential() {
     return 0
 }
 
+run_index_comparison() {
+    local engine="$1"
+    local output_dir="$2"
+
+    log_section "Running Index Comparison Tests"
+
+    if [ -f "$PROJECT_DIR/index-comparison-tests/runners/index_comparison_runner.py" ]; then
+        $PYTHON "$PROJECT_DIR/index-comparison-tests/runners/index_comparison_runner.py" \
+            --engine "$engine" \
+            --host localhost \
+            --port "$(get_engine_port "$engine")" \
+            --database "$(get_engine_database "$engine")" \
+            --user benchmark \
+            --password benchmark \
+            --target "upstream-$engine" \
+            --output-dir "$output_dir" \
+            || { log_warn "Index comparison tests had failures"; return 1; }
+    else
+        log_warn "Index comparison runner not found"
+        return 1
+    fi
+    return 0
+}
+
 get_engine_port() {
     local engine="$1"
     local port_file="$PROJECT_DIR/.benchmark-engine-ports/${engine}.env"
@@ -736,6 +762,7 @@ case "$SUITE" in
         run_tpc_c "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         run_tpc_h "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         run_engine_differential "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        run_index_comparison "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     regression)
         run_regression_tests "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
@@ -757,6 +784,9 @@ case "$SUITE" in
         ;;
     engine-differential)
         run_engine_differential "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
+        ;;
+    index-comparison)
+        run_index_comparison "$ENGINE" "$OUTPUT_DIR" || SUITE_FAILED=1
         ;;
     *)
         log_warn "Suite '$SUITE' not yet implemented, skipping"

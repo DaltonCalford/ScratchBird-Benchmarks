@@ -8,7 +8,7 @@ with benchmark performance. Works across Linux, macOS, and Windows.
 
 import json
 import os
-import platform
+import platform as platform_module
 import re
 import shutil
 import socket
@@ -118,8 +118,8 @@ class NetworkInfo:
 class SystemInfo:
     """Complete system information."""
     collection_time: str = field(default_factory=lambda: datetime.now().isoformat())
-    platform: str = field(default_factory=platform.platform)
-    python_version: str = field(default_factory=platform.python_version)
+    platform: str = field(default_factory=platform_module.platform)
+    python_version: str = field(default_factory=platform_module.python_version)
     cpu: CPUInfo = field(default_factory=CPUInfo)
     gpu: List[GPUInfo] = field(default_factory=list)
     memory: MemoryInfo = field(default_factory=MemoryInfo)
@@ -135,7 +135,7 @@ class SystemInfoCollector:
     """Collects comprehensive system information."""
     
     def __init__(self):
-        self.system = platform.system().lower()
+        self.system = platform_module.system().lower()
         
     def collect_all(self) -> SystemInfo:
         """Collect all system information."""
@@ -158,7 +158,7 @@ class SystemInfoCollector:
         
         try:
             # Basic CPU info
-            cpu.architecture = platform.machine()
+            cpu.architecture = platform_module.machine()
             cpu.logical_cores = os.cpu_count() or 0
             
             if self.system == "linux":
@@ -452,9 +452,9 @@ class SystemInfoCollector:
         os_info = OSInfo()
         
         try:
-            os_info.name = platform.system()
-            os_info.version = platform.version()
-            os_info.architecture = platform.machine()
+            os_info.name = platform_module.system()
+            os_info.version = platform_module.version()
+            os_info.architecture = platform_module.machine()
             
             if self.system == "linux":
                 # Try to get distribution info
@@ -472,7 +472,7 @@ class SystemInfoCollector:
                                 os_info.distribution = name_match.group(1)
                 
                 # Kernel version
-                os_info.kernel = platform.release()
+                os_info.kernel = platform_module.release()
                 
             elif self.system == "darwin":
                 os_info.distribution = "macOS"
@@ -483,7 +483,7 @@ class SystemInfoCollector:
                     
             elif self.system == "windows":
                 os_info.distribution = "Windows"
-                os_info.version = platform.win32_ver()[1]
+                os_info.version = platform_module.win32_ver()[1]
             
             # Timezone
             try:
@@ -648,9 +648,12 @@ class SystemInfoCollector:
         print(f"\nCPU:")
         print(f"  Model: {info.cpu.model}")
         print(f"  Cores: {info.cpu.physical_cores} physical, {info.cpu.logical_cores} logical")
-        print(f"  Frequency: {cpu.base_frequency_mhz:.0f} MHz (base), {cpu.max_frequency_mhz:.0f} MHz (max)")
-        if cpu.virtualization != "Unknown":
-            print(f"  Virtualization: {cpu.virtualization}")
+        print(
+            f"  Frequency: {info.cpu.base_frequency_mhz:.0f} MHz (base), "
+            f"{info.cpu.max_frequency_mhz:.0f} MHz (max)"
+        )
+        if info.cpu.virtualization != "Unknown":
+            print(f"  Virtualization: {info.cpu.virtualization}")
         
         print(f"\nMemory:")
         print(f"  Total: {info.memory.total_mb:,} MB ({info.memory.total_mb/1024:.1f} GB)")

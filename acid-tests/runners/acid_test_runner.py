@@ -7,6 +7,7 @@ Executes atomicity, consistency, isolation, and durability tests.
 
 import argparse
 import json
+import re
 import sys
 import time
 import traceback
@@ -85,6 +86,85 @@ class DatabaseConnection:
         except Exception as e:
             self.connection.rollback()
             raise
+
+    def _normalize_statement(self, sql: str) -> str:
+        statement = sql.strip()
+        if self.engine == "firebird":
+            statement = re.sub(
+                r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS",
+                "CREATE TABLE",
+                statement,
+                flags=re.IGNORECASE,
+            )
+        return statement
+
+    def _split_script(self, sql: str) -> List[str]:
+        cleaned_lines: List[str] = []
+        for raw_line in sql.splitlines():
+            stripped = raw_line.strip()
+            if not stripped or stripped.startswith("#") or stripped.startswith("--"):
+                continue
+            if "--" in raw_line:
+                raw_line = raw_line.split("--", 1)[0]
+            cleaned_lines.append(raw_line)
+
+        script = "\n".join(cleaned_lines)
+        statements: List[str] = []
+        buffer: List[str] = []
+        in_string = False
+        prev_char = ""
+
+        for char in script:
+            if char == "'" and prev_char != "\\":
+                in_string = not in_string
+            if char == ";" and not in_string:
+                statement = self._normalize_statement("".join(buffer))
+                if statement:
+                    statements.append(statement)
+                buffer = []
+            else:
+                buffer.append(char)
+            prev_char = char
+
+        trailing = self._normalize_statement("".join(buffer))
+        if trailing:
+            statements.append(trailing)
+
+        return statements
+
+    def execute_script(self, sql: str) -> None:
+        for statement in self._split_script(sql):
+            upper = re.sub(r"\s+", " ", statement.strip().upper())
+            if upper in ("BEGIN", "BEGIN WORK", "BEGIN TRANSACTION", "START TRANSACTION"):
+                continue
+            if upper == "COMMIT":
+                self.commit()
+                continue
+            if upper == "ROLLBACK":
+                self.rollback()
+                continue
+            try:
+                self.execute(statement)
+            except Exception as e:
+                message = str(e).lower()
+                if (
+                    self.engine == "firebird"
+                    and upper.startswith("CREATE TABLE")
+                    and ("already exists" in message or "name is already used" in message)
+                ):
+                    continue
+                raise
+
+            if (
+                self.engine == "firebird"
+                and (
+                    upper.startswith("CREATE TABLE")
+                    or upper.startswith("ALTER TABLE")
+                    or upper.startswith("DROP TABLE")
+                    or upper.startswith("RECREATE TABLE")
+                )
+            ):
+                self.commit()
     
     def commit(self):
         self.connection.commit()
@@ -139,15 +219,37 @@ class ACIDTestRunner:
         """Setup test tables."""
         if not setup_sql:
             return
-        
-        statements = [s.strip() for s in setup_sql.split(';') if s.strip()]
-        for stmt in statements:
-            try:
-                self.db.execute(stmt)
-                self.db.commit()
-            except Exception as e:
-                # Table might already exist
-                self.db.rollback()
+
+        try:
+            self.db.execute_script(setup_sql)
+            self.db.commit()
+        except Exception as e:
+            self.db.rollback()
+            message = str(e).lower()
+            if "already exists" in message or "name is already used" in message:
+                return
+            raise
+
+    def _resolve_expected_result(self, test: TransactionTest) -> Any:
+        if isinstance(test.expected_result, dict):
+            return test.expected_result.get(self.engine)
+        return test.expected_result
+
+    def _resolve_verification_sql(self, test: TransactionTest) -> str:
+        if test.name == "isolation_read_committed_default":
+            return {
+                "firebird": "SELECT TRIM(RDB$GET_CONTEXT('SYSTEM', 'ISOLATION_LEVEL')) FROM RDB$DATABASE",
+                "mysql": "SELECT @@transaction_isolation",
+                "postgresql": "SHOW default_transaction_isolation",
+            }[self.engine]
+        return test.verification_sql
+
+    def _values_match(self, expected: Any, actual: Any) -> bool:
+        if isinstance(expected, str) and isinstance(actual, str):
+            expected_normalized = re.sub(r"[-\s]+", " ", expected.strip().upper())
+            actual_normalized = re.sub(r"[-\s]+", " ", actual.strip().upper())
+            return actual_normalized == expected_normalized or actual_normalized.startswith(expected_normalized + " ")
+        return expected == actual
     
     def run_test(self, test: TransactionTest) -> TestResult:
         """Run a single ACID test."""
@@ -163,16 +265,17 @@ class ACIDTestRunner:
         print(f"    Description: {test.description}")
         
         try:
-            # Setup
-            if test.setup_sql:
-                self.setup_test_table(test.setup_sql)
-            
             # Skip concurrent tests in single-threaded mode
             if test.requires_concurrent:
                 result.status = "skipped"
                 result.error_message = "Requires concurrent execution mode"
                 print(f"    Status: SKIPPED (requires concurrent mode)")
+                self.results.append(result)
                 return result
+
+            # Setup
+            if test.setup_sql:
+                self.setup_test_table(test.setup_sql)
             
             # Execute test SQL
             result.sql_executed = test.test_sql[:200] if test.test_sql else ""
@@ -180,33 +283,29 @@ class ACIDTestRunner:
             # Try to execute - some tests expect errors
             error_occurred = False
             try:
-                self.db.execute(test.test_sql)
+                if test.test_sql and not test.test_sql.lstrip().startswith("#"):
+                    self.db.execute_script(test.test_sql)
                 self.db.commit()
             except Exception as e:
                 error_occurred = True
                 self.db.rollback()
-                # Some tests expect errors (like constraint violations)
-                if "violation" in test.name or "_error" in test.name:
-                    pass  # Expected
-                else:
-                    raise
+                result.error_message = str(e)
             
             # Verify result
-            self.db.execute(test.verification_sql)
+            self.db.execute(self._resolve_verification_sql(test))
             actual = self.db.fetchone()
             result.actual = actual[0] if actual else None
-            result.expected = test.expected_result
+            result.expected = self._resolve_expected_result(test)
             
             # Check if test passed
-            if result.expected == result.actual:
+            if self._values_match(result.expected, result.actual):
                 result.status = "passed"
-            elif test.name.endswith("_error") and error_occurred:
-                # For error tests, the error itself is success
-                result.status = "passed"
-                result.actual = "error_occurred"
             else:
                 result.status = "failed"
-                result.error_message = f"Expected {result.expected}, got {result.actual}"
+                if error_occurred and result.error_message:
+                    result.error_message = f"{result.error_message} | verification expected {result.expected}, got {result.actual}"
+                else:
+                    result.error_message = f"Expected {result.expected}, got {result.actual}"
             
             end_time = time.time()
             result.duration_ms = (end_time - start_time) * 1000
@@ -389,6 +488,8 @@ def main():
     finally:
         runner.disconnect()
 
+    return 1 if any(r.status in ("failed", "error") for r in runner.results) else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

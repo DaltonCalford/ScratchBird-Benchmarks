@@ -7,8 +7,8 @@
 #
 # Usage: ./run-all-tests.sh [suite] [engine] [options]
 #   suite: all, regression, stress, acid, concurrency, data-type, ddl, 
-#          optimizer, protocol, catalog, performance, tpc-c, tpc-h, 
-#          fault-tolerance, engine-differential
+#          optimizer, protocol, catalog, performance, tpc-c, tpc-h,
+#          fault-tolerance, engine-differential, index-comparison
 #   engine: firebird, mysql, postgresql, all
 #
 
@@ -58,6 +58,7 @@ Suites:
   tpc-h            TPC-H analytics benchmark
   fault-tolerance  Crash recovery, resource exhaustion
   engine-differential  Architectural exploitation tests
+  index-comparison  Normalized index-family comparisons
 
 Engines:
   firebird, mysql, postgresql, all
@@ -273,6 +274,19 @@ run_suite() {
                 $SCRIPT_DIR/engine-differential-tests/scripts/run-differential-tests.sh $engine 2>&1 | tee "$RESULTS_DIR/engine-differential.log" || true
             fi
             ;;
+        index-comparison)
+            log_section "15. INDEX COMPARISON TESTS"
+            log_info "Testing normalized index-family plan and performance behavior..."
+            if [ "$engine" = "all" ] && [ -f "$SCRIPT_DIR/scripts/run-benchmark-matrix.sh" ]; then
+                $SCRIPT_DIR/scripts/run-benchmark-matrix.sh \
+                    --engines=firebird,mysql,postgresql \
+                    --suites=index-comparison \
+                    --output="$RESULTS_DIR/index-comparison" \
+                    --compare 2>&1 | tee "$RESULTS_DIR/index-comparison.log" || true
+            elif [ -f "$SCRIPT_DIR/scripts/run-benchmark.sh" ]; then
+                $SCRIPT_DIR/scripts/run-benchmark.sh "$engine" index-comparison --output "$RESULTS_DIR/index-comparison" 2>&1 | tee "$RESULTS_DIR/index-comparison.log" || true
+            fi
+            ;;
         *)
             log_error "Unknown test suite: $suite"
             return 1
@@ -289,7 +303,7 @@ run_suite() {
 # Main execution
 if [ "$SUITE" = "all" ]; then
     # Run all test suites in order
-    SUITES="regression stress acid concurrency data-type ddl optimizer protocol catalog performance tpc-c tpc-h fault-tolerance engine-differential"
+    SUITES="regression stress acid concurrency data-type ddl optimizer protocol catalog performance tpc-c tpc-h fault-tolerance engine-differential index-comparison"
     for s in $SUITES; do
         run_suite $s $ENGINE || log_warn "Suite $s had failures"
     done

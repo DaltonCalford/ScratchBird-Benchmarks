@@ -142,6 +142,10 @@ class TextReportFormatter:
         lines.append(f"Passed:             {summary.get('passed', 'Unknown')}")
         lines.append(f"Failed:             {summary.get('failed', 'Unknown')}")
         lines.append(f"Errors:             {summary.get('errors', 'Unknown')}")
+        if 'unsupported' in summary:
+            lines.append(f"Unsupported:        {summary.get('unsupported', 'Unknown')}")
+        if 'plan_capture_success' in summary:
+            lines.append(f"Plan Capture OK:    {summary.get('plan_capture_success', 'Unknown')}")
         lines.append(f"Score:              {summary.get('score', 'Unknown')}")
         lines.append("")
         
@@ -166,6 +170,10 @@ class TextReportFormatter:
                             lines.append(f"  {symbol} {test_name}: {status}")
                             if 'duration_ms' in test:
                                 lines.append(f"      Duration: {test['duration_ms']:.2f}ms")
+                            if test.get('plan_expectation_status'):
+                                lines.append(f"      Plan: {test['plan_expectation_status']}")
+                            if test.get('comparative_verdict'):
+                                lines.append(f"      Verdict: {test['comparative_verdict']}")
                             if test.get('error_message'):
                                 lines.append(f"      Error: {test['error_message'][:100]}")
             lines.append("")

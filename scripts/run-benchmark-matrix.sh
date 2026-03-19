@@ -53,7 +53,7 @@ Usage: $0 [OPTIONS]
 
 Options:
   --engines=LIST     Comma-separated engine list (default: firebird,mysql,postgresql)
-  --suites=LIST      Comma-separated suite list (default: regression,stress,acid,performance,tpc-c,tpc-h,engine-differential)
+  --suites=LIST      Comma-separated suite list (default: regression,stress,acid,performance,tpc-c,tpc-h,engine-differential,index-comparison)
   --output=DIR       Output root directory (default: results/matrix-YYYYMMDD-HHMMSS)
                      Can also be set with BENCHMARK_MATRIX_OUTPUT.
                      Also writes matrix-comparison-unified.csv in this directory.
@@ -76,7 +76,7 @@ split_csv() {
 
 validate_suite() {
     case "$1" in
-        regression|stress|acid|performance|tpc-c|tpc-h|engine-differential|all)
+        regression|stress|acid|performance|tpc-c|tpc-h|engine-differential|index-comparison|all)
             return 0
             ;;
         all)
@@ -92,7 +92,7 @@ VALID_ENGINES=()
 VALID_SUITES=()
 
 ENABLED_ENGINES="${BENCHMARK_ENGINES:-firebird,mysql,postgresql}"
-ENABLED_SUITES="${BENCHMARK_SUITES:-regression,stress,acid,performance,tpc-c,tpc-h,engine-differential}"
+ENABLED_SUITES="${BENCHMARK_SUITES:-regression,stress,acid,performance,tpc-c,tpc-h,engine-differential,index-comparison}"
 OUTPUT_ROOT="${BENCHMARK_MATRIX_OUTPUT:-$PROJECT_DIR/results/matrix-$RUN_ID}"
 GENERATE_REPORT=false
 TAGS=""
@@ -238,6 +238,12 @@ run_suite_comparison() {
         --compare "${comparisons[@]}" \
         --output "$report_dir" \
         >/dev/null 2>&1 || true
+    if [ "$suite" = "index-comparison" ] && [ -f "$PROJECT_DIR/index-comparison-tests/scripts/compare_index_results.py" ]; then
+        python3 "$PROJECT_DIR/index-comparison-tests/scripts/compare_index_results.py" \
+            --results "${comparisons[@]}" \
+            --output-dir "$report_dir" \
+            >/dev/null 2>&1 || true
+    fi
     return 0
 }
 

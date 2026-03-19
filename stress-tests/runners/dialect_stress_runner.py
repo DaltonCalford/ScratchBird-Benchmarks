@@ -202,7 +202,7 @@ class DialectStressTestRunner:
         print(f"\nCreating schema using {self.engine} dialect...")
         
         # Drop existing tables in dependency-safe order.
-        tables = ["order_items", "orders", "products", "customers"]
+        tables = ["bulk_insert_test", "order_items", "orders", "products", "customers"]
         for table in tables:
             try:
                 self.db.execute(f"DROP TABLE {table}")
@@ -215,6 +215,13 @@ class DialectStressTestRunner:
         self.db.execute(self.dialect.create_table_products())
         self.db.execute(self.dialect.create_table_orders())
         self.db.execute(self.dialect.create_table_order_items())
+        self.db.execute("""
+            CREATE TABLE bulk_insert_test (
+                id BIGINT PRIMARY KEY,
+                data VARCHAR(100),
+                metric_value DECIMAL(10, 2)
+            )
+        """)
         
         self.db.commit()
         print("Schema created.")
@@ -530,6 +537,8 @@ def main():
         output_dir=args.output_dir
     )
     
+    verification_ok = True
+
     try:
         # Connect
         runner.connect()
@@ -545,6 +554,7 @@ def main():
             # Verify data integrity
             if not runner.verify_data(dataset):
                 print("\nWARNING: Data verification failed!")
+                verification_ok = False
         
         # Run stress tests
         runner.run_all_tests(args.test_filter)
@@ -558,6 +568,9 @@ def main():
     finally:
         runner.disconnect()
 
+    has_test_failures = any(metric.status in ("failed", "error") for metric in runner.metrics)
+    return 1 if has_test_failures or not verification_ok else 0
+
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())

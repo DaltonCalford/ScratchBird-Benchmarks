@@ -272,8 +272,8 @@ def generate_html_report(results: List[StressResult], output_file: Path):
             border: 1px solid #ecf0f1;
             border-radius: 4px;
         }}
-        .pass { color: #27ae60; font-weight: bold; }}
-        .fail { color: #e74c3c; font-weight: bold; }}
+        .pass {{ color: #27ae60; font-weight: bold; }}
+        .fail {{ color: #e74c3c; font-weight: bold; }}
         .error {{ color: #f39c12; font-weight: bold; }}
         .test-details {{
             font-size: 12px;

@@ -15,6 +15,10 @@ For matrix output root `results/matrix-<run-id>`:
   - Single CSV with one row per `(suite, metric)` and engine columns.
 - `comparison-<suite>/benchmark_comparison_*.txt`
   - Cross-engine text comparison for one suite (`--compare`).
+- `comparison-index-comparison/index-comparison-pairwise-*.json`
+  - Pairwise target comparison using the normalized index verdict model.
+- `comparison-index-comparison/index-comparison-pairwise-*.txt`
+  - Human-readable summary of pairwise verdict counts by target.
 - `<engine>/<suite>/reports/benchmark_comparison_*.txt`
   - Per-engine suite report (`--report`).
 - `<engine>/<suite>/*.json`
@@ -52,6 +56,10 @@ Metric families:
   - regression summary totals
 - `summary.*`
   - suite-specific summary fields
+- `summary.by_expectation_status.*`
+  - index-comparison scenario expectation states
+- `summary.plan_capture_success`
+  - successful normalized plan captures for index-comparison
 - `results.*` / `test_results.*`
   - derived counts from result payload
 - `artifact.result_json`
@@ -110,5 +118,6 @@ When ScratchBird result sets are available, use the same CSV schema per run set 
 - per suite metric deltas
 - status/failure signature differences
 - runtime changes by suite and engine mode
+- pairwise verdict output from the `index-comparison` lane
 
 This keeps interpretation deterministic and CI-friendly.

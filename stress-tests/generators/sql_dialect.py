@@ -524,10 +524,16 @@ class StressTestSQLGenerator:
     
     def left_join_all_customers(self) -> str:
         concat = self.d.string_concat("c.first_name", "' '", "c.last_name")
+        total_spent = self.d.coalesce("SUM(o.total_amount)", "0")
+        if self.d.engine == 'firebird':
+            total_spent = (
+                "CAST(SUM(COALESCE(o.total_amount, CAST(0 AS DECIMAL(12,2)))) "
+                "AS DOUBLE PRECISION)"
+            )
         return f"""
             SELECT c.customer_id, {concat} as full_name,
                    COUNT(o.order_id) as order_count,
-                   {self.d.coalesce("SUM(o.total_amount)", "0")} as total_spent
+                   {total_spent} as total_spent
             FROM customers c
             LEFT JOIN orders o ON c.customer_id = o.customer_id
             GROUP BY c.customer_id, c.first_name, c.last_name
@@ -548,6 +554,26 @@ class StressTestSQLGenerator:
         """
     
     def aggregation_daily_sales(self) -> str:
+        if self.d.engine == 'firebird':
+            year_expr = self.d.date_extract('YEAR', 'o.order_date')
+            month_expr = self.d.date_extract('MONTH', 'o.order_date')
+            return f"""
+                SELECT 
+                    {year_expr} as order_year,
+                    {month_expr} as order_month,
+                    p.category,
+                    COUNT(DISTINCT o.order_id) as total_orders,
+                    SUM(oi.quantity) as total_qty,
+                    CAST(SUM(oi.quantity * oi.unit_price) AS DOUBLE PRECISION) as total_revenue,
+                    CAST(AVG(oi.quantity * oi.unit_price) AS DOUBLE PRECISION) as avg_line_value
+                FROM orders o
+                INNER JOIN order_items oi ON o.order_id = oi.order_id
+                INNER JOIN products p ON oi.product_id = p.product_id
+                GROUP BY {year_expr}, {month_expr}, p.category
+                HAVING COUNT(DISTINCT o.order_id) >= 10
+                ORDER BY {year_expr} DESC, {month_expr} DESC, total_revenue DESC
+            """
+
         date_trunc = self.d.date_trunc('MONTH', 'o.order_date')
         return f"""
             SELECT 
@@ -568,6 +594,11 @@ class StressTestSQLGenerator:
     def window_function_ranking(self) -> str:
         rank = self.d.rank("c.customer_id", "o.total_amount DESC")
         sum_over = self.d.coalesce("SUM(o.total_amount) OVER (PARTITION BY c.customer_id)", "0")
+        if self.d.engine == 'firebird':
+            sum_over = (
+                "CAST(SUM(COALESCE(o.total_amount, CAST(0 AS DECIMAL(12,2)))) "
+                "OVER (PARTITION BY c.customer_id) AS DOUBLE PRECISION)"
+            )
         return f"""
             SELECT 
                 c.customer_id,
@@ -582,29 +613,32 @@ class StressTestSQLGenerator:
         """
     
     def bulk_insert_select(self) -> str:
-        concat = self.d.string_concat("'Data_'", "CAST(seq AS VARCHAR(20))")
+        if self.d.engine == 'mysql':
+            seq_as_text = "CAST(seq AS CHAR(20))"
+        else:
+            seq_as_text = "CAST(seq AS VARCHAR(20))"
+        concat = self.d.string_concat("'Data_'", seq_as_text)
         if self.d.engine == 'firebird':
             return f"""
-                INSERT INTO bulk_insert_test (id, data, value)
+                INSERT INTO bulk_insert_test (id, data, metric_value)
                 SELECT 
                     seq as id,
                     {concat} as data,
-                    (seq * 1.5) as value
+                    CAST(seq * 1.5 AS DECIMAL(10,2)) as metric_value
                 FROM (
-                    SELECT ROW_NUMBER() OVER () as seq
-                    FROM orders o
-                    CROSS JOIN order_items oi
+                    SELECT ROW_NUMBER() OVER (ORDER BY oi.item_id) as seq
+                    FROM order_items oi
                     ROWS 1 TO 100000
                 ) sub
             """
         else:  # mysql, postgresql
             limit = self.d.limit_clause(100000)
             return f"""
-                INSERT INTO bulk_insert_test (id, data, value)
+                INSERT INTO bulk_insert_test (id, data, metric_value)
                 SELECT 
                     seq as id,
                     {concat} as data,
-                    (seq * 1.5) as value
+                    (seq * 1.5) as metric_value
                 FROM (
                     SELECT ROW_NUMBER() OVER () as seq
                     FROM orders o
@@ -658,22 +692,87 @@ class StressTestSQLGenerator:
     def multi_dimensional_agg(self) -> str:
         year = self.d.date_extract('YEAR', 'o.order_date')
         month = self.d.date_extract('MONTH', 'o.order_date')
+        revenue_expr = "SUM(oi.quantity * oi.unit_price)"
+        avg_line_expr = "AVG(oi.quantity * oi.unit_price)"
+        if self.d.engine == 'firebird':
+            revenue_expr = "CAST(SUM(oi.quantity * oi.unit_price) AS DOUBLE PRECISION)"
+            avg_line_expr = "CAST(AVG(oi.quantity * oi.unit_price) AS DOUBLE PRECISION)"
         return f"""
             SELECT 
-                {year} as year,
-                {month} as month,
+                {year} as order_year,
+                {month} as order_month,
                 c.country_code,
                 p.category,
                 COUNT(DISTINCT o.order_id) as orders,
                 SUM(oi.quantity) as units,
-                SUM(oi.quantity * oi.unit_price) as revenue,
-                AVG(oi.quantity * oi.unit_price) as avg_line
+                {revenue_expr} as revenue,
+                {avg_line_expr} as avg_line
             FROM orders o
             INNER JOIN customers c ON o.customer_id = c.customer_id
             INNER JOIN order_items oi ON o.order_id = oi.order_id
             INNER JOIN products p ON oi.product_id = p.product_id
             GROUP BY {year}, {month}, c.country_code, p.category
-            ORDER BY year, month, revenue DESC
+            ORDER BY {year}, {month}, revenue DESC
+        """
+
+    def nested_subquery_agg(self) -> str:
+        if self.d.engine == 'firebird':
+            return """
+                SELECT 
+                    country_stats.country_code,
+                    country_stats.customer_count,
+                    country_stats.total_revenue,
+                    avg_stats.global_avg,
+                    country_stats.total_revenue / NULLIF(avg_stats.global_avg, 0) as revenue_ratio
+                FROM (
+                    SELECT 
+                        c.country_code,
+                        COUNT(DISTINCT c.customer_id) as customer_count,
+                        CAST(SUM(o.total_amount) AS DOUBLE PRECISION) as total_revenue
+                    FROM customers c
+                    INNER JOIN orders o ON c.customer_id = o.customer_id
+                    GROUP BY c.country_code
+                ) country_stats
+                CROSS JOIN (
+                    SELECT CAST(AVG(country_revenue) AS DOUBLE PRECISION) as global_avg
+                    FROM (
+                        SELECT CAST(SUM(o2.total_amount) AS DOUBLE PRECISION) as country_revenue
+                        FROM orders o2
+                        INNER JOIN customers c2 ON o2.customer_id = c2.customer_id
+                        GROUP BY c2.country_code
+                    ) revenue_stats
+                ) avg_stats
+                ORDER BY country_stats.total_revenue DESC
+            """
+
+        return """
+            SELECT 
+                country_stats.country_code,
+                country_stats.customer_count,
+                country_stats.total_revenue,
+                (SELECT AVG(country_revenue) FROM (
+                    SELECT SUM(total_amount) as country_revenue
+                    FROM orders o2
+                    INNER JOIN customers c2 ON o2.customer_id = c2.customer_id
+                    GROUP BY c2.country_code
+                ) sub2) as global_avg,
+                country_stats.total_revenue / 
+                    (SELECT AVG(country_revenue) FROM (
+                        SELECT SUM(total_amount) as country_revenue
+                        FROM orders o3
+                        INNER JOIN customers c3 ON o3.customer_id = c3.customer_id
+                        GROUP BY c3.country_code
+                    ) sub3) as revenue_ratio
+            FROM (
+                SELECT 
+                    c.country_code,
+                    COUNT(DISTINCT c.customer_id) as customer_count,
+                    SUM(o.total_amount) as total_revenue
+                FROM customers c
+                INNER JOIN orders o ON c.customer_id = o.customer_id
+                GROUP BY c.country_code
+            ) country_stats
+            ORDER BY country_stats.total_revenue DESC
         """
 
 
@@ -694,6 +793,7 @@ def get_dialect_specific_sql(engine: str, test_name: str) -> Optional[str]:
             'bulk_update_with_case': gen.bulk_update_with_case,
             'self_join_same_country': gen.self_join_same_country,
             'multi_dimensional_agg': gen.multi_dimensional_agg,
+            'nested_subquery_agg': gen.nested_subquery_agg,
         }
         
         if test_name in test_map:

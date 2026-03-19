@@ -71,7 +71,7 @@ Usage: $0 <ENGINE> [COMMAND]
 
 Engines:
   firebird    FirebirdSQL 5.0.1 (port 3050)
-  mysql       MySQL 9.0.1 (port 3306)
+  mysql       MySQL 8.4 (port 3306)
   postgresql  PostgreSQL 16 (port 5432)
 
 Commands:
@@ -338,7 +338,7 @@ EOF
             ;;
         mysql)
             cat << EOF
-MySQL 9.0.1:
+MySQL 8.4:
   Host:     localhost:$(get_engine_host_port mysql)
   Database: benchmark
   User:     benchmark

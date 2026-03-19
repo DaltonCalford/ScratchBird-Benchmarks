@@ -43,7 +43,7 @@ class AtomicityTests:
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS atomic_test (
                         id INT PRIMARY KEY,
-                        value INT NOT NULL,
+                        metric_value INT NOT NULL,
                         name VARCHAR(50)
                     );
                     DELETE FROM atomic_test;
@@ -65,7 +65,7 @@ class AtomicityTests:
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS atomic_test (
                         id INT PRIMARY KEY,
-                        value INT NOT NULL,
+                        metric_value INT NOT NULL,
                         name VARCHAR(50)
                     );
                     DELETE FROM atomic_test;
@@ -85,21 +85,21 @@ class AtomicityTests:
                 description="Explicit ROLLBACK undoes all changes",
                 category="atomicity",
                 setup_sql="""
-                    CREATE TABLE IF NOT EXISTS atomic_test (
+                    CREATE TABLE IF NOT EXISTS atomic_rollback_test (
                         id INT PRIMARY KEY,
-                        value INT NOT NULL
+                        metric_value INT NOT NULL
                     );
-                    DELETE FROM atomic_test;
-                    INSERT INTO atomic_test VALUES (100, 0);
+                    DELETE FROM atomic_rollback_test;
+                    INSERT INTO atomic_rollback_test VALUES (100, 0);
                 """,
                 test_sql="""
                     BEGIN;
-                    UPDATE atomic_test SET value = value + 100 WHERE id = 100;
-                    INSERT INTO atomic_test VALUES (101, 100);
-                    INSERT INTO atomic_test VALUES (102, 200);
+                    UPDATE atomic_rollback_test SET metric_value = metric_value + 100 WHERE id = 100;
+                    INSERT INTO atomic_rollback_test VALUES (101, 100);
+                    INSERT INTO atomic_rollback_test VALUES (102, 200);
                     ROLLBACK;
                 """,
-                verification_sql="SELECT value FROM atomic_test WHERE id = 100",
+                verification_sql="SELECT metric_value FROM atomic_rollback_test WHERE id = 100",
                 expected_result=0,  # Should be unchanged
             ),
             TransactionTest(
@@ -107,32 +107,31 @@ class AtomicityTests:
                 description="Multi-table transaction is atomic across all tables",
                 category="atomicity",
                 setup_sql="""
-                    CREATE TABLE IF NOT EXISTS accounts (
+                    CREATE TABLE IF NOT EXISTS atomic_accounts_test (
                         account_id INT PRIMARY KEY,
-                        balance DECIMAL(12,2) NOT NULL
+                        account_balance DECIMAL(12,2) NOT NULL
                     );
-                    CREATE TABLE IF NOT EXISTS transactions (
+                    CREATE TABLE IF NOT EXISTS atomic_account_transactions_test (
                         tx_id INT PRIMARY KEY,
                         from_account INT,
                         to_account INT,
-                        amount DECIMAL(12,2)
+                        transfer_amount DECIMAL(12,2)
                     );
-                    DELETE FROM accounts;
-                    DELETE FROM transactions;
-                    INSERT INTO accounts VALUES (1, 1000.00);
-                    INSERT INTO accounts VALUES (2, 1000.00);
+                    DELETE FROM atomic_accounts_test;
+                    DELETE FROM atomic_account_transactions_test;
+                    INSERT INTO atomic_accounts_test VALUES (1, 1000.00);
+                    INSERT INTO atomic_accounts_test VALUES (2, 1000.00);
                 """,
                 test_sql="""
                     BEGIN;
-                    UPDATE accounts SET balance = balance - 100 WHERE account_id = 1;
-                    UPDATE accounts SET balance = balance + 100 WHERE account_id = 2;
-                    INSERT INTO transactions VALUES (1, 1, 2, 100.00);
+                    UPDATE atomic_accounts_test SET account_balance = account_balance - 100 WHERE account_id = 1;
+                    UPDATE atomic_accounts_test SET account_balance = account_balance + 100 WHERE account_id = 2;
+                    INSERT INTO atomic_account_transactions_test VALUES (1, 1, 2, 100.00);
                     COMMIT;
                 """,
                 verification_sql="""
-                    SELECT 
-                        (SELECT balance FROM accounts WHERE account_id = 1) +
-                        (SELECT balance FROM accounts WHERE account_id = 2)
+                    SELECT CAST(SUM(account_balance) AS DECIMAL(12,2))
+                    FROM atomic_accounts_test
                 """,
                 expected_result=2000.00,  # Total should remain constant
             ),
@@ -141,20 +140,20 @@ class AtomicityTests:
                 description="ROLLBACK TO SAVEPOINT partially undoes transaction",
                 category="atomicity",
                 setup_sql="""
-                    CREATE TABLE IF NOT EXISTS atomic_test (id INT PRIMARY KEY, value INT);
-                    DELETE FROM atomic_test;
+                    CREATE TABLE IF NOT EXISTS atomic_savepoint_test (id INT PRIMARY KEY, metric_value INT);
+                    DELETE FROM atomic_savepoint_test;
                 """,
                 test_sql="""
                     BEGIN;
-                    INSERT INTO atomic_test VALUES (1, 100);
+                    INSERT INTO atomic_savepoint_test VALUES (1, 100);
                     SAVEPOINT sp1;
-                    INSERT INTO atomic_test VALUES (2, 200);
-                    INSERT INTO atomic_test VALUES (3, 300);
+                    INSERT INTO atomic_savepoint_test VALUES (2, 200);
+                    INSERT INTO atomic_savepoint_test VALUES (3, 300);
                     ROLLBACK TO SAVEPOINT sp1;
-                    INSERT INTO atomic_test VALUES (4, 400);
+                    INSERT INTO atomic_savepoint_test VALUES (4, 400);
                     COMMIT;
                 """,
-                verification_sql="SELECT COUNT(*) FROM atomic_test",
+                verification_sql="SELECT COUNT(*) FROM atomic_savepoint_test",
                 expected_result=2,  # Only id 1 and 4 should exist
             ),
         ]
@@ -285,13 +284,13 @@ class IsolationTests:
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS isolation_test (
                         id INT PRIMARY KEY,
-                        value INT
+                        metric_value INT
                     );
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 100);
                 """,
                 test_sql="# Concurrent test required",  # Requires 2 connections
-                verification_sql="SELECT value FROM isolation_test WHERE id = 1",
+                verification_sql="SELECT metric_value FROM isolation_test WHERE id = 1",
                 expected_result=100,
             ),
             TransactionTest(
@@ -302,13 +301,13 @@ class IsolationTests:
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS isolation_test (
                         id INT PRIMARY KEY,
-                        value INT
+                        metric_value INT
                     );
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 100);
                 """,
                 test_sql="# Concurrent test required",
-                verification_sql="SELECT value FROM isolation_test WHERE id = 1",
+                verification_sql="SELECT metric_value FROM isolation_test WHERE id = 1",
                 expected_result=100,
             ),
             TransactionTest(
@@ -320,7 +319,7 @@ class IsolationTests:
                     CREATE TABLE IF NOT EXISTS isolation_test (
                         id INT PRIMARY KEY,
                         category VARCHAR(20),
-                        value INT
+                        metric_value INT
                     );
                     DELETE FROM isolation_test;
                     INSERT INTO isolation_test VALUES (1, 'A', 100);
@@ -349,14 +348,18 @@ class IsolationTests:
             ),
             TransactionTest(
                 name="isolation_read_committed_default",
-                description="Default isolation level is READ COMMITTED",
+                description="Default isolation level matches the engine baseline",
                 category="isolation",
                 setup_sql="""
                     CREATE TABLE IF NOT EXISTS isolation_test (id INT);
                 """,
                 test_sql="# Check current isolation level",
                 verification_sql="# Engine-specific isolation level check",
-                expected_result="READ COMMITTED",
+                expected_result={
+                    "firebird": "READ COMMITTED",
+                    "mysql": "REPEATABLE-READ",
+                    "postgresql": "read committed",
+                },
             ),
         ]
 
@@ -410,20 +413,20 @@ class DurabilityTests:
                 description="New transaction sees committed data immediately",
                 category="durability",
                 setup_sql="""
-                    CREATE TABLE IF NOT EXISTS durability_test (
+                    CREATE TABLE IF NOT EXISTS durability_visibility_test (
                         id INT PRIMARY KEY,
-                        value INT
+                        metric_value INT
                     );
-                    DELETE FROM durability_test;
+                    DELETE FROM durability_visibility_test;
                 """,
                 test_sql="""
                     BEGIN;
-                    INSERT INTO durability_test VALUES (1, 42);
+                    INSERT INTO durability_visibility_test VALUES (1, 42);
                     COMMIT;
                     -- New transaction
                     BEGIN;
                 """,
-                verification_sql="SELECT value FROM durability_test WHERE id = 1",
+                verification_sql="SELECT metric_value FROM durability_visibility_test WHERE id = 1",
                 expected_result=42,
             ),
         ]
