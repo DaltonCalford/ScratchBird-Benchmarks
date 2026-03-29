@@ -26,21 +26,21 @@
       "runtime_service": "scratchbird",
       "target_class": "scratchbird-emulation",
       "dialect_family": "firebird",
-      "enabled": false
+      "enabled": true
     },
     "scratchbird-mysql": {
       "engine": "mysql",
       "runtime_service": "scratchbird",
       "target_class": "scratchbird-emulation",
       "dialect_family": "mysql",
-      "enabled": false
+      "enabled": true
     },
     "scratchbird-postgresql": {
       "engine": "postgresql",
       "runtime_service": "scratchbird",
       "target_class": "scratchbird-emulation",
       "dialect_family": "postgresql",
-      "enabled": false
+      "enabled": true
     },
     "scratchbird-native": {
       "engine": "scratchbird",
@@ -51,4 +51,3 @@
     }
   }
 }
-

@@ -46,6 +46,12 @@ class MySQLExecutor:
         self.user = user
         self.password = password
         self.timeout = timeout
+        self.mysql_bin = (
+            os.environ.get('SCRATCHBIRD_MYSQL_CLI_BIN')
+            or os.environ.get('SCRATCHBIRD_MY_ISQL')
+            or os.environ.get('MYSQL_CLI_BIN')
+            or 'mysql'
+        )
     
     def execute_mysql(self, sql_script: str) -> Tuple[int, str, str]:
         """Execute SQL using mysql command-line client."""
@@ -59,7 +65,7 @@ class MySQLExecutor:
         try:
             # Build mysql command
             cmd = [
-                'mysql',
+                self.mysql_bin,
                 f'--host={self.host}',
                 f'--port={self.port}',
                 f'--user={self.user}',

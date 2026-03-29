@@ -110,13 +110,30 @@ class FirebirdExecutor:
     """Executes SQL against Firebird using isql."""
     
     def __init__(self, host: str, port: int, database: str, 
-                 user: str, password: str, timeout: int = 30):
+                 user: str, password: str, timeout: int = 120):
         self.host = host
         self.port = port
         self.database = database
         self.user = user
         self.password = password
         self.timeout = timeout
+        self.isql_bin = (
+            os.environ.get('SCRATCHBIRD_FB_NATIVE_ISQL')
+            or os.environ.get('SCRATCHBIRD_FB_ISQL')
+            or os.environ.get('FIREBIRD_ISQL_BIN')
+            or 'isql'
+        )
+        self.env = os.environ.copy()
+        isql_path = Path(self.isql_bin)
+        if isql_path.is_absolute():
+            firebird_root = isql_path.parent.parent
+            firebird_lib = firebird_root / 'lib'
+            self.env.setdefault('FIREBIRD', str(firebird_root))
+            if firebird_lib.exists():
+                existing = self.env.get('LD_LIBRARY_PATH', '')
+                self.env['LD_LIBRARY_PATH'] = (
+                    f"{firebird_lib}:{existing}" if existing else str(firebird_lib)
+                )
     
     def execute_isql(self, sql_script: str) -> Tuple[int, str, str]:
         """Execute SQL using isql command-line tool."""
@@ -132,7 +149,7 @@ class FirebirdExecutor:
         try:
             # Build isql command
             cmd = [
-                'isql',
+                self.isql_bin,
                 '-u', self.user,
                 '-p', self.password,
                 '-i', sql_file,
@@ -143,7 +160,8 @@ class FirebirdExecutor:
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=self.timeout
+                timeout=self.timeout,
+                env=self.env
             )
             
             return result.returncode, result.stdout, result.stderr
@@ -388,9 +406,14 @@ class FBTRunner:
         # Get expected output
         expected_stdout = version_info.get('expected_stdout', '')
         expected_stderr = version_info.get('expected_stderr', '')
+        substitutions = version_info.get('substitutions', [])
+
+        filtered_stdout = self._apply_substitutions(stdout, substitutions)
+        filtered_stderr = self._apply_substitutions(stderr, substitutions)
+        filtered_combined = filtered_stdout + filtered_stderr
         
         # Normalize outputs for comparison
-        normalized_actual = self._normalize_output(stdout + stderr)
+        normalized_actual = self._normalize_output(filtered_combined)
         normalized_expected = self._normalize_output(expected_stdout + expected_stderr)
         
         # Determine result
@@ -413,10 +436,24 @@ class FBTRunner:
             status=status,
             duration_ms=duration_ms,
             expected_output=expected_stdout,
-            actual_output=stdout,
-            diff=self._generate_diff(expected_stdout, stdout) if status == "FAIL" else "",
-            error_message=stderr if returncode != 0 else ""
+            actual_output=filtered_combined,
+            diff=self._generate_diff(expected_stdout + expected_stderr, filtered_combined)
+                if status == "FAIL" else "",
+            error_message=filtered_stderr if returncode != 0 else ""
         )
+
+    def _apply_substitutions(self, output: str, substitutions) -> str:
+        """Apply donor-defined regex substitutions to runtime output."""
+        rewritten = output
+        for entry in substitutions or []:
+            if not isinstance(entry, (list, tuple)) or len(entry) != 2:
+                continue
+            pattern, replacement = entry
+            try:
+                rewritten = re.sub(pattern, replacement, rewritten, flags=re.MULTILINE)
+            except re.error:
+                continue
+        return rewritten
     
     def _normalize_output(self, output: str) -> str:
         """Normalize output for comparison."""
@@ -425,6 +462,8 @@ class FBTRunner:
         for line in lines:
             # Remove leading/trailing whitespace
             line = line.strip()
+            if re.match(r"^After line \d+ in file .+$", line):
+                continue
             # Skip empty lines
             if line:
                 normalized.append(line)

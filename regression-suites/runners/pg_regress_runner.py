@@ -46,6 +46,12 @@ class PostgreSQLExecutor:
         self.user = user
         self.password = password
         self.timeout = timeout
+        self.psql_bin = (
+            os.environ.get('SCRATCHBIRD_PG_PSQL_BIN')
+            or os.environ.get('SCRATCHBIRD_PG_ISQL')
+            or os.environ.get('PG_PSQL_BIN')
+            or 'psql'
+        )
         self.env = os.environ.copy()
         self.env['PGPASSWORD'] = password
     
@@ -61,7 +67,7 @@ class PostgreSQLExecutor:
         try:
             # Build psql command
             cmd = [
-                'psql',
+                self.psql_bin,
                 f'--host={self.host}',
                 f'--port={self.port}',
                 f'--username={self.user}',
