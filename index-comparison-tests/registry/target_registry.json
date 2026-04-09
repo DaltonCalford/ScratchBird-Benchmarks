@@ -47,7 +47,7 @@
       "runtime_service": "scratchbird",
       "target_class": "scratchbird-native",
       "dialect_family": "sblr",
-      "enabled": false
+      "enabled": true
     }
   }
 }

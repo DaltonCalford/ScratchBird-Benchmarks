@@ -127,6 +127,15 @@ class DatabaseConnection:
         except Exception as e:
             self.connection.rollback()
             raise
+
+    def executemany(self, sql: str, seq_of_params) -> Any:
+        """Execute a batch of parameterized statements."""
+        try:
+            self.cursor.executemany(sql, seq_of_params)
+            return self.cursor
+        except Exception:
+            self.connection.rollback()
+            raise
     
     def commit(self):
         """Commit transaction."""
@@ -175,6 +184,26 @@ class StressTestRunner:
         
         # Ensure output directory exists
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _load_batch_size(self, requested_batch_size: int) -> int:
+        """Keep ScratchBird load transactions small enough for Beta 1 gates."""
+        if self.engine == "scratchbird":
+            return min(requested_batch_size, 512)
+        return requested_batch_size
+
+    @staticmethod
+    def _workload_index_ddls() -> List[str]:
+        """Secondary indexes required for the query-phase stress workload."""
+        return [
+            "CREATE INDEX idx_stress_customers_country_customer ON customers (country_code, customer_id)",
+            "CREATE INDEX idx_stress_customers_registration ON customers (registration_date)",
+            "CREATE INDEX idx_stress_customers_balance ON customers (account_balance)",
+            "CREATE INDEX idx_stress_orders_customer_date ON orders (customer_id, order_date)",
+            "CREATE INDEX idx_stress_orders_order_date ON orders (order_date)",
+            "CREATE INDEX idx_stress_order_items_order_id ON order_items (order_id)",
+            "CREATE INDEX idx_stress_order_items_product_id ON order_items (product_id)",
+            "CREATE INDEX idx_stress_products_category ON products (category)",
+        ]
     
     def connect(self):
         """Connect to database."""
@@ -292,6 +321,7 @@ class StressTestRunner:
     def load_data(self, dataset: Dict[str, Any], batch_size: int = 10000):
         """Load generated data into database."""
         print("\nLoading data...")
+        batch_size = self._load_batch_size(batch_size)
         
         # Collect FK reference values
         fk_references = {}
@@ -320,9 +350,8 @@ class StressTestRunner:
                     sql = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
                     
                     # Insert batch
-                    for row in batch:
-                        values = tuple(row[c] for c in columns)
-                        self.db.execute(sql, values)
+                    batch_values = [tuple(row[c] for c in columns) for row in batch]
+                    self.db.executemany(sql, batch_values)
                     
                     self.db.commit()
                     rows_loaded += len(batch)
@@ -349,6 +378,18 @@ class StressTestRunner:
             self.load_metrics.append(metric)
         
         print("\nData loading complete.")
+
+    def create_workload_indexes(self):
+        """Build the query-phase workload indexes after data load."""
+        print("\nCreating workload indexes...")
+        start = time.time()
+
+        for ddl in self._workload_index_ddls():
+            self.db.execute(ddl)
+
+        self.db.commit()
+        duration_ms = (time.time() - start) * 1000
+        print(f"Workload indexes created in {duration_ms/1000:.2f}s")
     
     def _get_placeholders(self, count: int) -> str:
         """Get parameter placeholders for the current engine."""
@@ -612,6 +653,7 @@ def main():
         if not args.skip_data_load:
             runner.create_schema(dataset)
             runner.load_data(dataset)
+            runner.create_workload_indexes()
             
             # Verify data integrity
             if not runner.verify_data(dataset):

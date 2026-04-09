@@ -10,6 +10,9 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SCRATCHBIRD_DRIVER_ROOT_DEFAULT="$(cd "$PROJECT_DIR/.." && pwd)/ScratchBird-driver"
+SCRATCHBIRD_DRIVER_PYTHONPATH_DEFAULT="$SCRATCHBIRD_DRIVER_ROOT_DEFAULT/tracks/p3/drivers/python/src"
+RUN_BENCHMARK_INVOCATION=("$0" "$@")
 
 load_env_file() {
     local env_file="$PROJECT_DIR/.env"
@@ -23,6 +26,10 @@ load_env_file() {
 }
 
 load_env_file
+
+if [ -d "${SCRATCHBIRD_DRIVER_PYTHONPATH:-$SCRATCHBIRD_DRIVER_PYTHONPATH_DEFAULT}" ]; then
+    export PYTHONPATH="${SCRATCHBIRD_DRIVER_PYTHONPATH:-$SCRATCHBIRD_DRIVER_PYTHONPATH_DEFAULT}${PYTHONPATH:+:$PYTHONPATH}"
+fi
 
 # Use virtual environment Python if available
 if [ -n "$VIRTUAL_ENV" ]; then
@@ -200,6 +207,11 @@ check_python_deps() {
                 missing+=("psycopg2-binary")
             fi
             ;;
+        scratchbird)
+            if ! $PYTHON -c "import scratchbird" 2>/dev/null; then
+                missing+=("scratchbird-python-driver")
+            fi
+            ;;
     esac
     
     if [ ${#missing[@]} -gt 0 ]; then
@@ -225,6 +237,7 @@ Engines:
   firebird    Run benchmarks against FirebirdSQL
   mysql       Run benchmarks against MySQL
   postgresql  Run benchmarks against PostgreSQL
+  scratchbird Run benchmarks against ScratchBird native
 
 Suites:
   all               Run all test suites (default)
@@ -262,6 +275,8 @@ Examples:
 Prerequisites:
   - Start engine first: ./start-engine.sh <engine> start
   - Only ONE engine should be running during benchmarks
+  - Stress-suite transaction variants can be forced with
+    BENCHMARK_STRESS_TRANSACTION_MODES=no_transaction,normal_transactional,autocommit
 
 Output:
   Results are saved to: results/<suite>-<engine>-<timestamp>.json
@@ -272,12 +287,24 @@ EOF
 
 detect_running_engine() {
     # Check which engine is currently running
-    local engines=("firebird" "mysql" "postgresql")
+    local engines=("firebird" "mysql" "postgresql" "scratchbird")
     local running=""
     local count=0
     
     for engine in "${engines[@]}"; do
-        if docker ps | grep -q "sb-benchmark-$engine"; then
+        if [ "$engine" = "scratchbird" ]; then
+            local env_file="$PROJECT_DIR/.benchmark-engine-ports/scratchbird.env"
+            local pid_file=""
+            if [ -f "$env_file" ]; then
+                # shellcheck disable=SC1090
+                . "$env_file"
+                pid_file="${BENCHMARK_SCRATCHBIRD_ROOT}/control/sb_server.pid"
+                if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+                    running="$engine"
+                    ((count++))
+                fi
+            fi
+        elif docker ps | grep -q "sb-benchmark-$engine"; then
             running="$engine"
             ((count++))
         fi
@@ -306,9 +333,9 @@ verify_engine_running() {
             ;;
         multiple)
             log_warn "Multiple engines detected! Stopping others for isolation..."
-            for engine in firebird mysql postgresql; do
+            for engine in firebird mysql postgresql scratchbird; do
                 if [ "$engine" != "$expected_engine" ]; then
-                    docker stop "sb-benchmark-$engine" 2>/dev/null || true
+                    "$PROJECT_DIR/scripts/start-engine.sh" "$engine" stop >/dev/null 2>&1 || true
                 fi
             done
             ;;
@@ -320,6 +347,24 @@ verify_engine_running() {
                 exit 1
             fi
             ;;
+    esac
+}
+
+load_engine_env_file() {
+    local engine="$1"
+    local port_file="$PROJECT_DIR/.benchmark-engine-ports/${engine}.env"
+    if [ -f "$port_file" ]; then
+        # shellcheck disable=SC1090
+        . "$port_file"
+    fi
+}
+
+get_engine_host() {
+    local engine="$1"
+    load_engine_env_file "$engine"
+    case "$engine" in
+        firebird|mysql|postgresql) echo "localhost" ;;
+        scratchbird) echo "${BENCHMARK_SCRATCHBIRD_HOST:-127.0.0.1}" ;;
     esac
 }
 
@@ -341,11 +386,53 @@ collect_system_info() {
     fi
 }
 
+capture_run_provenance() {
+    local engine="$1"
+    local suite="$2"
+    local output_dir="$3"
+    local report_enabled="$4"
+    local tags="$5"
+    local notes="$6"
+    local -a cmd=(
+        "$PYTHON" "$PROJECT_DIR/scripts/capture_run_provenance.py"
+        --project-dir "$PROJECT_DIR"
+        --engine "$engine"
+        --suite "$suite"
+        --output-dir "$output_dir"
+        --runner-script "$PROJECT_DIR/scripts/run-benchmark.sh"
+        --runner-cwd "$(pwd)"
+        --python-executable "$PYTHON"
+        --runtime-option "report_enabled=$report_enabled"
+        --runtime-option "tags=$tags"
+        --runtime-option "notes=$notes"
+        --runtime-option "output_dir=$output_dir"
+    )
+    local arg
+    for arg in "${RUN_BENCHMARK_INVOCATION[@]}"; do
+        cmd+=(--runner-argv "$arg")
+    done
+    "${cmd[@]}" >/dev/null
+}
+
 run_regression_tests() {
     local engine="$1"
     local output_dir="$2"
     
     log_section "Running Regression Tests"
+
+    if [ "$engine" = "scratchbird" ]; then
+        log_warn "Regression suite is donor-engine only; ScratchBird regression proof stays in the main repo public-beta gate"
+        mkdir -p "$output_dir"
+        cat > "$output_dir/regression-scratchbird-skipped.json" <<EOF
+{
+  "suite": "regression",
+  "engine": "scratchbird",
+  "status": "skipped",
+  "reason": "ScratchBird uses the repo-local public beta gate instead of donor regression clones."
+}
+EOF
+        return 0
+    fi
 
     if [ ! -d "$PROJECT_DIR/regression-suites" ] || [ ! -x "$PROJECT_DIR/regression-suites/run-regression-suite.sh" ]; then
         log_warn "Regression suite runner not found"
@@ -393,20 +480,43 @@ run_stress_tests() {
     local engine="$1"
     local output_dir="$2"
     local scale="${STRESS_SCALE:-medium}"
+    local transaction_modes="${BENCHMARK_STRESS_TRANSACTION_MODES:-}"
+    local -a modes=()
     
     log_section "Running Stress Tests"
+
+    if [ -z "$transaction_modes" ]; then
+        case "$engine" in
+            mysql|postgresql)
+                modes=("no_transaction" "normal_transactional" "autocommit")
+                ;;
+            firebird|scratchbird)
+                modes=("normal_transactional" "autocommit")
+                ;;
+            *)
+                modes=("engine_default")
+                ;;
+        esac
+    else
+        IFS=',' read -r -a modes <<< "$transaction_modes"
+    fi
     
     if [ -f "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" ]; then
-        $PYTHON "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" \
-            --engine "$engine" \
-            --host localhost \
-            --port $(get_engine_port "$engine") \
-            --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
-            --scale "$scale" \
-            --output-dir "$output_dir" \
-            || { log_warn "Stress tests had failures"; return 1; }
+        local mode
+        for mode in "${modes[@]}"; do
+            log_info "Stress transaction mode: $mode"
+            $PYTHON "$PROJECT_DIR/stress-tests/runners/dialect_stress_runner.py" \
+                --engine "$engine" \
+                --host "$(get_engine_host "$engine")" \
+                --port $(get_engine_port "$engine") \
+                --database $(get_engine_database "$engine") \
+                --user "$(get_engine_user "$engine")" \
+                --password "$(get_engine_password "$engine")" \
+                --scale "$scale" \
+                --transaction-mode "$mode" \
+                --output-dir "$output_dir" \
+                || { log_warn "Stress tests had failures in transaction mode $mode"; return 1; }
+        done
     else
         log_warn "Stress test runner not found"
         return 1
@@ -423,11 +533,11 @@ run_acid_tests() {
     if [ -f "$PROJECT_DIR/acid-tests/runners/acid_test_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/acid-tests/runners/acid_test_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port $(get_engine_port "$engine") \
             --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
             --output-dir "$output_dir" \
             || { log_warn "ACID tests had failures"; return 1; }
     else
@@ -446,11 +556,11 @@ run_performance_tests() {
     if [ -f "$PROJECT_DIR/performance-tests/runners/performance_test_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/performance-tests/runners/performance_test_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port $(get_engine_port "$engine") \
             --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
             --output-dir "$output_dir" \
             || { log_warn "Performance tests had failures"; return 1; }
     else
@@ -469,11 +579,11 @@ run_tpc_c() {
     if [ -f "$PROJECT_DIR/tpc-c/runners/tpc_c_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/tpc-c/runners/tpc_c_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port $(get_engine_port "$engine") \
             --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
             --warehouses 10 \
             --duration 300 \
             --output-dir "$output_dir" \
@@ -494,11 +604,11 @@ run_tpc_h() {
     if [ -f "$PROJECT_DIR/tpc-h/runners/tpc_h_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/tpc-h/runners/tpc_h_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port $(get_engine_port "$engine") \
             --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
             --scale 1 \
             --output-dir "$output_dir" \
             || { log_warn "TPC-H had failures"; return 1; }
@@ -518,11 +628,11 @@ run_engine_differential() {
     if [ -f "$PROJECT_DIR/engine-differential-tests/runners/differential_test_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/engine-differential-tests/runners/differential_test_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port $(get_engine_port "$engine") \
             --database $(get_engine_database "$engine") \
-            --user benchmark \
-            --password benchmark \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
             --output-dir "$output_dir" \
             || { log_warn "Differential tests had failures"; return 1; }
     else
@@ -541,12 +651,12 @@ run_index_comparison() {
     if [ -f "$PROJECT_DIR/index-comparison-tests/runners/index_comparison_runner.py" ]; then
         $PYTHON "$PROJECT_DIR/index-comparison-tests/runners/index_comparison_runner.py" \
             --engine "$engine" \
-            --host localhost \
+            --host "$(get_engine_host "$engine")" \
             --port "$(get_engine_port "$engine")" \
             --database "$(get_engine_database "$engine")" \
-            --user benchmark \
-            --password benchmark \
-            --target "upstream-$engine" \
+            --user "$(get_engine_user "$engine")" \
+            --password "$(get_engine_password "$engine")" \
+            --target "$(get_engine_target "$engine")" \
             --output-dir "$output_dir" \
             || { log_warn "Index comparison tests had failures"; return 1; }
     else
@@ -558,25 +668,46 @@ run_index_comparison() {
 
 get_engine_port() {
     local engine="$1"
-    local port_file="$PROJECT_DIR/.benchmark-engine-ports/${engine}.env"
-
-    if [ -f "$port_file" ]; then
-        # shellcheck disable=SC1090
-        . "$port_file"
-    fi
+    load_engine_env_file "$engine"
 
     case "$engine" in
         firebird) echo "${BENCHMARK_FIREBIRD_PORT:-3050}" ;;
         mysql) echo "${BENCHMARK_MYSQL_PORT:-3306}" ;;
         postgresql) echo "${BENCHMARK_POSTGRESQL_PORT:-5432}" ;;
+        scratchbird) echo "${BENCHMARK_SCRATCHBIRD_PORT:-17092}" ;;
     esac
 }
 
 get_engine_database() {
+    load_engine_env_file "$1"
     case "$1" in
         firebird) echo "/firebird/data/benchmark.fdb" ;;
         mysql) echo "benchmark" ;;
         postgresql) echo "benchmark" ;;
+        scratchbird) echo "${BENCHMARK_SCRATCHBIRD_DB:-main}" ;;
+    esac
+}
+
+get_engine_user() {
+    load_engine_env_file "$1"
+    case "$1" in
+        firebird|mysql|postgresql) echo "benchmark" ;;
+        scratchbird) echo "${BENCHMARK_SCRATCHBIRD_USER:-bootstrap_admin}" ;;
+    esac
+}
+
+get_engine_password() {
+    load_engine_env_file "$1"
+    case "$1" in
+        firebird|mysql|postgresql) echo "benchmark" ;;
+        scratchbird) echo "${BENCHMARK_SCRATCHBIRD_PASSWORD:-SbExampleBootstrap_2026!}" ;;
+    esac
+}
+
+get_engine_target() {
+    case "$1" in
+        scratchbird) echo "scratchbird-native" ;;
+        *) echo "upstream-$1" ;;
     esac
 }
 
@@ -714,7 +845,7 @@ if [ -z "$ENGINE" ]; then
 fi
 
 case "$ENGINE" in
-    firebird|mysql|postgresql)
+    firebird|mysql|postgresql|scratchbird)
         ;;
     --help|-h)
         show_help
@@ -722,7 +853,7 @@ case "$ENGINE" in
         ;;
     *)
         log_error "Unknown engine: $ENGINE"
-        echo "Valid engines: firebird, mysql, postgresql"
+        echo "Valid engines: firebird, mysql, postgresql, scratchbird"
         exit 1
         ;;
 esac
@@ -745,6 +876,8 @@ log_section "ScratchBird Benchmark"
 log_info "Engine: $ENGINE"
 log_info "Suite:  $SUITE"
 log_info "Output: $OUTPUT_DIR"
+
+capture_run_provenance "$ENGINE" "$SUITE" "$OUTPUT_DIR" "$GENERATE_REPORT" "$TAGS" "$NOTES"
 
 # Collect system info first
 collect_system_info "$OUTPUT_DIR"

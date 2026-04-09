@@ -5,9 +5,29 @@ from __future__ import annotations
 
 import json
 import re
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from statistics import mean
 from typing import Any, Dict, Iterable, List, Optional, Sequence
+
+
+def ensure_scratchbird_driver() -> None:
+    candidates = []
+    env_path = Path(__file__).resolve().parents[2] / ".env"
+    if env_path.exists():
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            if line.startswith("SCRATCHBIRD_DRIVER_PYTHONPATH="):
+                candidates.append(Path(line.split("=", 1)[1].strip()))
+                break
+
+    project_root = Path(__file__).resolve().parents[2]
+    candidates.append(project_root.parent / "ScratchBird-driver" / "tracks" / "p3" / "drivers" / "python" / "src")
+
+    for candidate in candidates:
+        if candidate.exists():
+            sys.path.insert(0, str(candidate))
+            return
 
 
 def percentile(sorted_values: Sequence[float], pct: float) -> float:
@@ -314,11 +334,118 @@ class FirebirdAdapter(BaseAdapter):
         )
 
 
+class ScratchBirdAdapter(BaseAdapter):
+    placeholder = "?"
+    _LOAD_CHUNK_ROWS = 128
+
+    def connect(self) -> None:
+        ensure_scratchbird_driver()
+        import scratchbird
+
+        self.connection = scratchbird.connect(
+            host=self.host,
+            port=self.port,
+            database=self.database,
+            user=self.user,
+            password=self.password,
+            protocol="native",
+            front_door_mode="direct",
+            sslmode="disable",
+        )
+        self.connection.autocommit = False
+        leak_detector = getattr(self.connection, "_leak_detector", None)
+        if leak_detector is not None and hasattr(leak_detector, "config"):
+            leak_detector.config.threshold = max(float(leak_detector.config.threshold), 1800.0)
+
+    def execute_many(self, sql: str, rows: Iterable[Sequence[Any]]) -> None:
+        row_list = list(rows)
+        if not row_list:
+            return
+
+        cursor = self.cursor()
+        try:
+            for i in range(0, len(row_list), self._LOAD_CHUNK_ROWS):
+                cursor.executemany(sql, row_list[i : i + self._LOAD_CHUNK_ROWS])
+                self.connection.commit()
+        except Exception:
+            self.connection.rollback()
+            raise
+        finally:
+            cursor.close()
+
+    def drop_table(self, table_name: str) -> None:
+        try:
+            self.execute(f"DROP TABLE IF EXISTS {table_name}")
+            self.commit()
+        except Exception:
+            self.rollback()
+
+    def _collect_nodes(self, node: Dict[str, Any], collected: List[Dict[str, Any]]) -> None:
+        collected.append(node)
+        for child in node.get("children", []):
+            if isinstance(child, dict):
+                self._collect_nodes(child, collected)
+
+    def explain(self, query_sql: str) -> NormalizedPlan:
+        cursor = self.cursor()
+        cursor.execute(f"EXPLAIN (FORMAT JSON) {query_sql}")
+        raw = cursor.fetchone()[0]
+        cursor.close()
+
+        if isinstance(raw, str):
+            raw = json.loads(raw)
+        if not isinstance(raw, dict):
+            return NormalizedPlan(
+                plan_capture_status="error",
+                raw_plan=raw,
+                actual_plan_family="unknown",
+                used_index=False,
+                index_names=[],
+                fallback_to_scan=False,
+                extra_sort=False,
+                order_satisfied_by_index=None,
+            )
+
+        root = raw.get("plan_root", {})
+        nodes: List[Dict[str, Any]] = []
+        if isinstance(root, dict):
+            self._collect_nodes(root, nodes)
+
+        node_types = [str(node.get("node_type", "")) for node in nodes]
+        index_names = [str(node.get("index_name")) for node in nodes if node.get("index_name")]
+        used_index = any(node_type in ("IndexScan", "IndexOnlyScan", "BitmapIndexScan") for node_type in node_types)
+        fallback = any(node_type == "SeqScan" for node_type in node_types) and not used_index
+        extra_sort = any(node_type == "Sort" for node_type in node_types)
+
+        if "BitmapIndexScan" in node_types:
+            plan_family = "bitmap_scan"
+        elif "IndexOnlyScan" in node_types:
+            plan_family = "index_only_scan"
+        elif "IndexScan" in node_types:
+            plan_family = "index_scan"
+        elif "SeqScan" in node_types:
+            plan_family = "full_scan"
+        else:
+            plan_family = "unknown"
+
+        return NormalizedPlan(
+            plan_capture_status="ok",
+            raw_plan=raw,
+            actual_plan_family=plan_family,
+            used_index=used_index,
+            index_names=index_names,
+            fallback_to_scan=fallback,
+            extra_sort=extra_sort,
+            order_satisfied_by_index=not extra_sort,
+        )
+
+
 def create_adapter(engine: str, host: str, port: int, database: str, user: str, password: str) -> BaseAdapter:
     adapters = {
         "firebird": FirebirdAdapter,
         "mysql": MySQLAdapter,
-        "postgresql": PostgreSQLAdapter
+        "postgresql": PostgreSQLAdapter,
+        "scratchbird": ScratchBirdAdapter,
     }
     adapter = adapters[engine](host, port, database, user, password)
     adapter.connect()

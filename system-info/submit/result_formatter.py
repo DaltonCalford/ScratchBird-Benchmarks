@@ -14,10 +14,17 @@ No external servers involved - completely offline and transparent.
 
 import json
 import platform
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from benchmark_provenance import validate_scratchbird_result_provenance
 
 
 @dataclass
@@ -56,6 +63,7 @@ class TextReportFormatter:
         # Load benchmark results
         with open(benchmark_file, 'r') as f:
             benchmark = json.load(f)
+        scratchbird_provenance = validate_scratchbird_result_provenance(benchmark_file)
         
         # Load system info if provided
         system_info = None
@@ -79,6 +87,14 @@ class TextReportFormatter:
         lines.append(f"Engine Tested:      {metadata.get('engine', 'Unknown')}")
         lines.append(f"Test Suite:         {metadata.get('suite', 'Unknown')}")
         lines.append(f"Timestamp:          {metadata.get('timestamp', datetime.now().isoformat())}")
+        if scratchbird_provenance:
+            runtime = scratchbird_provenance["scratchbird_runtime"]
+            binary = runtime["server_binary"]
+            repo = runtime["build_identity"]["scratchbird_repo"]
+            lines.append(f"ScratchBird Binary: {binary['realpath']}")
+            lines.append(f"Binary SHA256:      {binary['sha256']}")
+            lines.append(f"ScratchBird HEAD:   {repo.get('git_head', 'Unknown')}")
+            lines.append(f"Build Dir:          {runtime['build_identity'].get('build_dir', 'Unknown')}")
         if tags:
             lines.append(f"Tags:               {', '.join(tags)}")
         if notes:
@@ -218,6 +234,7 @@ class TextReportFormatter:
         # Load all results
         all_results = []
         for f in result_files:
+            validate_scratchbird_result_provenance(f)
             with open(f, 'r') as fp:
                 all_results.append(json.load(fp))
         

@@ -10,6 +10,16 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Tuple
 
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from benchmark_provenance import (
+    PROVENANCE_FILENAME,
+    provenance_file_for_result,
+    validate_scratchbird_result_provenance,
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -203,6 +213,25 @@ def main() -> int:
             result_file = pick_suite_json_file(output_root, engine, suite)
             if result_file is None:
                 continue
+
+            if engine == "scratchbird":
+                try:
+                    provenance = validate_scratchbird_result_provenance(result_file)
+                except ValueError as exc:
+                    print(f"error: {exc}", file=sys.stderr)
+                    return 3
+                put_metric(
+                    suite,
+                    "artifact.provenance_json",
+                    engine,
+                    str(provenance_file_for_result(result_file).relative_to(output_root)),
+                )
+                put_metric(
+                    suite,
+                    "artifact.scratchbird_binary_sha256",
+                    engine,
+                    provenance["scratchbird_runtime"]["server_binary"]["sha256"],
+                )
 
             put_metric(
                 suite,

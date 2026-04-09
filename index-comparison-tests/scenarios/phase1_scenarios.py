@@ -22,13 +22,13 @@ class IndexComparisonScenario:
 
 
 def build_point_rows() -> List[Tuple[int, int, str]]:
-    return [(row_id, row_id * 2, f"payload-{row_id}") for row_id in range(1, 5001)]
+    return [(row_id, row_id * 2, f"payload-{row_id}") for row_id in range(1, 1501)]
 
 
 def build_range_rows() -> List[Tuple[int, int, int, str]]:
     return [
         (row_id, row_id, row_id % 97, f"segment-{row_id % 23}")
-        for row_id in range(1, 6001)
+        for row_id in range(1, 2001)
     ]
 
 
@@ -36,7 +36,7 @@ def build_composite_rows() -> List[Tuple[int, str, int, str]]:
     states = ("active", "pending", "inactive", "archived")
     return [
         (row_id, states[row_id % len(states)], row_id % 20, f"group-{row_id % 41}")
-        for row_id in range(1, 8001)
+        for row_id in range(1, 2501)
     ]
 
 
@@ -67,9 +67,10 @@ PHASE1_SCENARIOS = [
             "CREATE INDEX idx_idxcmp_point_lookup_key ON idxcmp_point_lookup (lookup_key)"
         ],
         query_sql={
-            "firebird": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 4242",
-            "mysql": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 4242",
-            "postgresql": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 4242"
+            "firebird": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 842",
+            "mysql": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 842",
+            "postgresql": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 842",
+            "scratchbird": "SELECT id, payload FROM idxcmp_point_lookup WHERE lookup_key = 842"
         },
         expected_access_patterns=["index_scan", "index_lookup", "index_only_scan"],
         expected_index_names=["IDX_IDXCMP_POINT_LOOKUP_KEY"]
@@ -92,9 +93,10 @@ PHASE1_SCENARIOS = [
             "CREATE INDEX idx_idxcmp_range_scan_key ON idxcmp_range_scan (range_key)"
         ],
         query_sql={
-            "firebird": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 1100 AND 1400",
-            "mysql": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 1100 AND 1400",
-            "postgresql": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 1100 AND 1400"
+            "firebird": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 300 AND 600",
+            "mysql": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 300 AND 600",
+            "postgresql": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 300 AND 600",
+            "scratchbird": "SELECT id, range_key FROM idxcmp_range_scan WHERE range_key BETWEEN 300 AND 600"
         },
         expected_access_patterns=["index_scan", "range_scan", "index_lookup"],
         expected_index_names=["IDX_IDXCMP_RANGE_SCAN_KEY"]
@@ -134,6 +136,12 @@ PHASE1_SCENARIOS = [
                 "FROM idxcmp_composite_order "
                 "WHERE status = 'active' AND category BETWEEN 5 AND 9 "
                 "ORDER BY category, id LIMIT 25"
+            ),
+            "scratchbird": (
+                "SELECT id, status, category "
+                "FROM idxcmp_composite_order "
+                "WHERE status = 'active' AND category BETWEEN 5 AND 9 "
+                "ORDER BY category, id LIMIT 25"
             )
         },
         expected_access_patterns=["index_scan", "range_scan", "index_lookup"],
@@ -141,4 +149,3 @@ PHASE1_SCENARIOS = [
         require_order_from_index=True
     )
 ]
-

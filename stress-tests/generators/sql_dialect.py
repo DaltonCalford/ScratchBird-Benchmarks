@@ -477,6 +477,37 @@ class PostgreSQLDialect(SQLDialect):
         return "%s"
 
 
+class ScratchBirdDialect(PostgreSQLDialect):
+    """ScratchBird native dialect for the external benchmark harness."""
+
+    def __init__(self):
+        super().__init__()
+        self.engine = "scratchbird"
+
+    def date_trunc(self, field: str, expression: str) -> str:
+        field = field.upper()
+        if field == 'MONTH':
+            return f"CAST(TO_CHAR({expression}, 'YYYY-MM-01') AS DATE)"
+        if field == 'YEAR':
+            return f"CAST(TO_CHAR({expression}, 'YYYY-01-01') AS DATE)"
+        if field == 'DAY':
+            return f"CAST({expression} AS DATE)"
+        return expression
+
+    def date_extract(self, field: str, expression: str) -> str:
+        field = field.upper()
+        if field == 'YEAR':
+            return f"CAST(TO_CHAR({expression}, 'YYYY') AS INTEGER)"
+        if field == 'MONTH':
+            return f"CAST(TO_CHAR({expression}, 'MM') AS INTEGER)"
+        if field == 'DAY':
+            return f"CAST(TO_CHAR({expression}, 'DD') AS INTEGER)"
+        return super().date_extract(field, expression)
+
+    def get_placeholder(self) -> str:
+        return "?"
+
+
 class SQLDialectFactory:
     """Factory for creating dialect instances."""
     
@@ -484,6 +515,7 @@ class SQLDialectFactory:
         'firebird': FirebirdDialect,
         'mysql': MySQLDialect,
         'postgresql': PostgreSQLDialect,
+        'scratchbird': ScratchBirdDialect,
     }
     
     @classmethod
@@ -716,6 +748,35 @@ class StressTestSQLGenerator:
         """
 
     def nested_subquery_agg(self) -> str:
+        if self.d.engine == 'scratchbird':
+            return """
+                SELECT 
+                    country_stats.country_code,
+                    country_stats.customer_count,
+                    country_stats.total_revenue,
+                    avg_stats.global_avg,
+                    country_stats.total_revenue / NULLIF(avg_stats.global_avg, 0) as revenue_ratio
+                FROM (
+                    SELECT 
+                        c.country_code,
+                        COUNT(DISTINCT c.customer_id) as customer_count,
+                        SUM(o.total_amount) as total_revenue
+                    FROM customers c
+                    INNER JOIN orders o ON c.customer_id = o.customer_id
+                    GROUP BY c.country_code
+                ) country_stats
+                CROSS JOIN (
+                    SELECT AVG(country_revenue) as global_avg
+                    FROM (
+                        SELECT SUM(o2.total_amount) as country_revenue
+                        FROM orders o2
+                        INNER JOIN customers c2 ON o2.customer_id = c2.customer_id
+                        GROUP BY c2.country_code
+                    ) revenue_stats
+                ) avg_stats
+                ORDER BY country_stats.total_revenue DESC
+            """
+
         if self.d.engine == 'firebird':
             return """
                 SELECT 

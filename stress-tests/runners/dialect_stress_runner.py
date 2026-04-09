@@ -18,11 +18,16 @@ import time
 import traceback
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 # Add parent directory to path for imports
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent.parent))
+scratchbird_driver = PROJECT_ROOT.parent / "ScratchBird-driver" / "tracks" / "p3" / "drivers" / "python" / "src"
+if scratchbird_driver.exists():
+    sys.path.insert(0, str(scratchbird_driver))
 
 from generators.data_generator import (
     TableDataGenerator, 
@@ -70,20 +75,62 @@ class DatabaseConnection:
     """Database connection wrapper supporting multiple engines."""
     
     def __init__(self, engine: str, host: str, port: int, database: str,
-                 user: str, password: str):
+                 user: str, password: str, transaction_mode: str = "engine_default"):
         self.engine = engine
         self.host = host
         self.port = port
         self.database = database
         self.user = user
         self.password = password
+        self.requested_transaction_mode = transaction_mode
+        self.effective_transaction_mode = "normal_transactional"
+        self.connection_handles_statement_commit = False
+        self.explicit_commit_per_statement = False
         self.connection = None
         self.cursor = None
         
         self._connect()
+
+    def _normalized_transaction_mode(self) -> str:
+        legacy_aliases = {
+            "always_in_transaction": "normal_transactional",
+            "autocommit_statement": "no_transaction",
+        }
+        requested = legacy_aliases.get(
+            self.requested_transaction_mode, self.requested_transaction_mode
+        )
+        if requested == "engine_default":
+            if self.engine in ("mysql", "postgresql"):
+                return "no_transaction"
+            return "normal_transactional"
+        return requested
+
+    def _safe_rollback(self) -> None:
+        try:
+            self.connection.rollback()
+        except Exception:
+            pass
     
     def _connect(self):
         """Establish database connection."""
+        self.effective_transaction_mode = self._normalized_transaction_mode()
+        if self.engine in ("firebird", "scratchbird"):
+            if self.effective_transaction_mode not in ("normal_transactional", "autocommit"):
+                raise ValueError(
+                    f"{self.engine} supports only normal_transactional or autocommit"
+                )
+        elif self.engine in ("mysql", "postgresql"):
+            if self.effective_transaction_mode not in (
+                "no_transaction",
+                "normal_transactional",
+                "autocommit",
+            ):
+                raise ValueError(
+                    f"Unsupported transaction mode '{self.requested_transaction_mode}' for {self.engine}"
+                )
+        else:
+            raise ValueError(f"Unsupported engine: {self.engine}")
+
         if self.engine == "firebird":
             import fdb
             self.connection = fdb.connect(
@@ -92,6 +139,9 @@ class DatabaseConnection:
                 database=self.database,
                 user=self.user,
                 password=self.password
+            )
+            self.explicit_commit_per_statement = (
+                self.effective_transaction_mode == "autocommit"
             )
         elif self.engine == "mysql":
             import pymysql
@@ -102,8 +152,12 @@ class DatabaseConnection:
                 user=self.user,
                 password=self.password,
                 charset='utf8mb4',
-                autocommit=False
+                autocommit=(self.effective_transaction_mode == "no_transaction")
             )
+            if self.effective_transaction_mode == "no_transaction":
+                self.connection_handles_statement_commit = True
+            elif self.effective_transaction_mode == "autocommit":
+                self.explicit_commit_per_statement = True
         elif self.engine == "postgresql":
             import psycopg2
             self.connection = psycopg2.connect(
@@ -113,10 +167,32 @@ class DatabaseConnection:
                 user=self.user,
                 password=self.password
             )
-            self.connection.autocommit = False
-        else:
-            raise ValueError(f"Unsupported engine: {self.engine}")
-        
+            self.connection.autocommit = (self.effective_transaction_mode == "no_transaction")
+            if self.effective_transaction_mode == "no_transaction":
+                self.connection_handles_statement_commit = True
+            elif self.effective_transaction_mode == "autocommit":
+                self.explicit_commit_per_statement = True
+        elif self.engine == "scratchbird":
+            import scratchbird
+            self.connection = scratchbird.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                protocol="native",
+                front_door_mode="direct",
+                sslmode="disable",
+            )
+            self.connection.autocommit = (self.effective_transaction_mode == "autocommit")
+            if self.effective_transaction_mode == "autocommit":
+                self.connection_handles_statement_commit = True
+            leak_detector = getattr(self.connection, "_leak_detector", None)
+            if leak_detector is not None and hasattr(leak_detector, "config"):
+                # Stress benchmarks intentionally hold a single session open while
+                # loading and exercising the dataset. Treat that as expected up to
+                # a multi-hour window so the log stays focused on real failures.
+                leak_detector.config.threshold = max(float(leak_detector.config.threshold), 7200.0)
         self.cursor = self.connection.cursor()
     
     def execute(self, sql: str, params: Optional[Tuple] = None) -> Any:
@@ -126,26 +202,69 @@ class DatabaseConnection:
                 self.cursor.execute(sql, params)
             else:
                 self.cursor.execute(sql)
+            if self.explicit_commit_per_statement and self.cursor.description is None:
+                self.connection.commit()
             return self.cursor
-        except Exception as e:
-            self.connection.rollback()
+        except Exception:
+            self._safe_rollback()
+            raise
+
+    def executemany(self, sql: str, seq_of_params) -> Any:
+        """Execute a batch of parameterized statements."""
+        try:
+            batch = list(seq_of_params)
+            if (
+                self.engine == "postgresql"
+                and batch
+                and sql.lstrip().upper().startswith("INSERT INTO ")
+            ):
+                from psycopg2.extras import execute_values
+
+                head, marker, tail = sql.partition("VALUES")
+                if marker:
+                    execute_values(
+                        self.cursor,
+                        f"{head}VALUES %s",
+                        batch,
+                        template=tail.strip(),
+                        page_size=len(batch),
+                    )
+                else:
+                    self.cursor.executemany(sql, batch)
+            else:
+                self.cursor.executemany(sql, batch)
+            if self.explicit_commit_per_statement:
+                self.connection.commit()
+            return self.cursor
+        except Exception:
+            self._safe_rollback()
             raise
     
     def commit(self):
         """Commit transaction."""
+        if self.effective_transaction_mode != "normal_transactional":
+            return
         self.connection.commit()
     
     def rollback(self):
         """Rollback transaction."""
+        if self.effective_transaction_mode != "normal_transactional":
+            return
         self.connection.rollback()
     
     def fetchall(self) -> List[Tuple]:
         """Fetch all results."""
-        return self.cursor.fetchall()
+        rows = self.cursor.fetchall()
+        if self.explicit_commit_per_statement:
+            self.connection.commit()
+        return rows
     
     def fetchone(self) -> Optional[Tuple]:
         """Fetch one result."""
-        return self.cursor.fetchone()
+        row = self.cursor.fetchone()
+        if self.explicit_commit_per_statement:
+            self.connection.commit()
+        return row
     
     def rowcount(self) -> int:
         """Get row count from last operation."""
@@ -163,7 +282,8 @@ class DialectStressTestRunner:
     """Main dialect-aware stress test runner."""
     
     def __init__(self, engine: str, host: str, port: int, database: str,
-                 user: str, password: str, output_dir: Path):
+                 user: str, password: str, output_dir: Path,
+                 transaction_mode: str = "engine_default"):
         self.engine = engine
         self.host = host
         self.port = port
@@ -171,6 +291,8 @@ class DialectStressTestRunner:
         self.user = user
         self.password = password
         self.output_dir = output_dir
+        self.requested_transaction_mode = transaction_mode
+        self.effective_transaction_mode = transaction_mode
         
         self.db: Optional[DatabaseConnection] = None
         self.dialect = SQLDialectFactory.get_dialect(engine)
@@ -179,6 +301,107 @@ class DialectStressTestRunner:
         self.load_metrics: List[DataLoadMetrics] = []
         
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+    def _load_batch_size(self, requested_batch_size: int) -> int:
+        """Keep ScratchBird load transactions small enough for Beta 1 gates."""
+        if self.engine == "scratchbird":
+            return min(requested_batch_size, 4096)
+        return requested_batch_size
+
+    @staticmethod
+    def _workload_index_ddls() -> List[str]:
+        """Secondary indexes required for query-phase stress coverage."""
+        return [
+            "CREATE INDEX idx_stress_customers_country_customer ON customers (country_code, customer_id)",
+            "CREATE INDEX idx_stress_customers_registration ON customers (registration_date)",
+            "CREATE INDEX idx_stress_customers_balance ON customers (account_balance)",
+            "CREATE INDEX idx_stress_orders_customer_date ON orders (customer_id, order_date)",
+            "CREATE INDEX idx_stress_orders_order_date ON orders (order_date)",
+            "CREATE INDEX idx_stress_order_items_order_id ON order_items (order_id)",
+            "CREATE INDEX idx_stress_order_items_product_id ON order_items (product_id)",
+            "CREATE INDEX idx_stress_products_category ON products (category)",
+        ]
+
+    @staticmethod
+    def _sql_literal(value: Any) -> str:
+        if value is None:
+            return "NULL"
+        if isinstance(value, bool):
+            return "1" if value else "0"
+        if isinstance(value, (int, float, Decimal)):
+            return str(value)
+        if isinstance(value, datetime):
+            return f"'{value:%Y-%m-%d %H:%M:%S}'"
+        text = str(value).replace("'", "''")
+        return f"'{text}'"
+
+    def export_load_sql(self, dataset: Dict[str, Any], script_path: Path, batch_size: int = 10000):
+        """Export schema plus load batches as a plain SQL script."""
+        print(f"\nWriting SQL load script to {script_path}...")
+        batch_size = self._load_batch_size(batch_size)
+        script_path.parent.mkdir(parents=True, exist_ok=True)
+
+        with script_path.open("w", encoding="utf-8") as handle:
+            handle.write("-- Generated by dialect_stress_runner.py\n")
+            handle.write(f"-- engine={self.engine} scale export batch_size={batch_size}\n\n")
+            handle.write("DROP TABLE IF EXISTS bulk_insert_test;\n")
+            handle.write("DROP TABLE IF EXISTS order_items;\n")
+            handle.write("DROP TABLE IF EXISTS orders;\n")
+            handle.write("DROP TABLE IF EXISTS products;\n")
+            handle.write("DROP TABLE IF EXISTS customers;\n")
+            handle.write("COMMIT;\n\n")
+            handle.write(self.dialect.create_table_customers().strip())
+            handle.write(";\n")
+            handle.write(self.dialect.create_table_products().strip())
+            handle.write(";\n")
+            handle.write(self.dialect.create_table_orders().strip())
+            handle.write(";\n")
+            handle.write(self.dialect.create_table_order_items().strip())
+            handle.write(";\n")
+            handle.write(
+                "CREATE TABLE bulk_insert_test (\n"
+                "    id BIGINT PRIMARY KEY,\n"
+                "    data VARCHAR(100),\n"
+                "    metric_value DECIMAL(10, 2)\n"
+                ");\n"
+            )
+            handle.write("COMMIT;\n\n")
+
+            fk_references = {}
+            for table_name, spec in dataset.items():
+                print(f"  Exporting {table_name} ({spec.row_count:,} rows)...")
+                generator = TableDataGenerator(spec, fk_references)
+                columns = [c.name for c in spec.columns]
+                column_list = ", ".join(columns)
+                rows_written = 0
+
+                for batch_num, batch in enumerate(generator.generate_rows(batch_size)):
+                    if batch_num % 10 == 0:
+                        print(f"    Batch {batch_num}: {rows_written:,} rows scripted...")
+                    values_sql = []
+                    for row in batch:
+                        values_sql.append(
+                            "(" + ", ".join(self._sql_literal(row[c]) for c in columns) + ")"
+                        )
+                    handle.write(
+                        f"INSERT INTO {table_name} ({column_list}) VALUES\n"
+                        f"  " + ",\n  ".join(values_sql) + ";\n"
+                    )
+                    handle.write("COMMIT;\n")
+                    rows_written += len(batch)
+
+                pk_col = next((c for c in spec.columns if c.unique and c.distribution == "sequential"), None)
+                if pk_col:
+                    fk_references[f"{table_name}.{pk_col.name}"] = list(range(1, spec.row_count + 1))
+                handle.write("\n")
+
+            handle.write("-- workload indexes built after load to keep insert timing separate\n")
+            for ddl in self._workload_index_ddls():
+                handle.write(ddl)
+                handle.write(";\n")
+            handle.write("COMMIT;\n")
+
+        print(f"SQL load script written: {script_path}")
     
     def connect(self):
         """Connect to database."""
@@ -186,8 +409,11 @@ class DialectStressTestRunner:
         print(f"Using {self.engine.upper()} SQL dialect")
         self.db = DatabaseConnection(
             self.engine, self.host, self.port, 
-            self.database, self.user, self.password
+            self.database, self.user, self.password,
+            transaction_mode=self.requested_transaction_mode
         )
+        self.effective_transaction_mode = self.db.effective_transaction_mode
+        print(f"Transaction mode: {self.effective_transaction_mode}")
         print("Connected.")
     
     def disconnect(self):
@@ -229,6 +455,7 @@ class DialectStressTestRunner:
     def load_data(self, dataset: Dict[str, Any], batch_size: int = 10000):
         """Load generated data into database."""
         print(f"\nLoading data using {self.engine} dialect...")
+        batch_size = self._load_batch_size(batch_size)
         
         placeholder = self.dialect.get_placeholder()
         fk_references = {}
@@ -253,10 +480,9 @@ class DialectStressTestRunner:
                 for batch_num, batch in enumerate(generator.generate_rows(batch_size)):
                     if batch_num % 10 == 0:
                         print(f"    Batch {batch_num}: {rows_loaded:,} rows loaded...")
-                    
-                    for row in batch:
-                        values = tuple(row[c] for c in columns)
-                        self.db.execute(sql, values)
+
+                    batch_values = [tuple(row[c] for c in columns) for row in batch]
+                    self.db.executemany(sql, batch_values)
                     
                     self.db.commit()
                     rows_loaded += len(batch)
@@ -283,6 +509,18 @@ class DialectStressTestRunner:
             self.load_metrics.append(metric)
         
         print("\nData loading complete.")
+
+    def create_workload_indexes(self):
+        """Build the query-phase workload indexes after data load."""
+        print(f"\nCreating workload indexes using {self.engine} dialect...")
+        start = time.time()
+
+        for ddl in self._workload_index_ddls():
+            self.db.execute(ddl)
+
+        self.db.commit()
+        duration_ms = (time.time() - start) * 1000
+        print(f"Workload indexes created in {duration_ms/1000:.2f}s")
     
     def verify_data(self, dataset: Dict[str, Any]) -> bool:
         """Run verification queries to ensure data integrity."""
@@ -408,12 +646,16 @@ class DialectStressTestRunner:
     def save_results(self):
         """Save test results to JSON file."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        results_file = self.output_dir / f"stress_{self.engine}_{timestamp}.json"
+        results_file = self.output_dir / (
+            f"stress_{self.engine}_{self.effective_transaction_mode}_{timestamp}.json"
+        )
         
         results_data = {
             'metadata': {
                 'engine': self.engine,
                 'dialect': self.engine,
+                'requested_transaction_mode': self.requested_transaction_mode,
+                'transaction_mode': self.effective_transaction_mode,
                 'host': self.host,
                 'port': self.port,
                 'database': self.database,
@@ -497,7 +739,7 @@ class DialectStressTestRunner:
 def main():
     parser = argparse.ArgumentParser(description='Dialect-Aware Stress Test Runner')
     parser.add_argument('--engine', required=True,
-                        choices=['firebird', 'mysql', 'postgresql'],
+                        choices=['firebird', 'mysql', 'postgresql', 'scratchbird'],
                         help='Database engine to test')
     parser.add_argument('--host', default='localhost',
                         help='Database host')
@@ -518,6 +760,22 @@ def main():
                         help='Filter tests by name substring')
     parser.add_argument('--skip-data-load', action='store_true',
                         help='Skip data loading (use existing data)')
+    parser.add_argument('--emit-load-sql', type=Path, default=None,
+                        help='Write schema and load phase as a plain SQL script')
+    parser.add_argument('--emit-load-sql-only', action='store_true',
+                        help='Write the SQL load script and exit without running the benchmark')
+    parser.add_argument('--load-batch-size', type=int, default=10000,
+                        help='Requested row batch size for load/export operations')
+    parser.add_argument('--transaction-mode', default='engine_default',
+                        choices=[
+                            'engine_default',
+                            'normal_transactional',
+                            'autocommit',
+                            'no_transaction',
+                            'always_in_transaction',
+                            'autocommit_statement',
+                        ],
+                        help='Transaction behavior for the benchmark connection')
     
     args = parser.parse_args()
     
@@ -534,22 +792,27 @@ def main():
         database=args.database,
         user=args.user,
         password=args.password,
-        output_dir=args.output_dir
+        output_dir=args.output_dir,
+        transaction_mode=args.transaction_mode
     )
     
     verification_ok = True
+    dataset = generate_standard_dataset(args.scale)
+
+    if args.emit_load_sql is not None:
+        runner.export_load_sql(dataset, args.emit_load_sql, batch_size=args.load_batch_size)
+        if args.emit_load_sql_only:
+            return 0
 
     try:
         # Connect
         runner.connect()
-        
-        # Generate dataset specification
-        dataset = generate_standard_dataset(args.scale)
-        
+
         # Create schema and load data
         if not args.skip_data_load:
             runner.create_schema(dataset)
-            runner.load_data(dataset)
+            runner.load_data(dataset, batch_size=args.load_batch_size)
+            runner.create_workload_indexes()
             
             # Verify data integrity
             if not runner.verify_data(dataset):

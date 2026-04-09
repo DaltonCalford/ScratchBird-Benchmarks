@@ -11,6 +11,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 RUN_ID="$(date -u +"%Y%m%d-%H%M%S")"
+RUN_BENCHMARK_MATRIX_INVOCATION=("$0" "$@")
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -45,6 +46,33 @@ require_python() {
     fi
 }
 
+capture_matrix_provenance() {
+    local output_root="$1"
+    local -a cmd=(
+        python3 "$PROJECT_DIR/scripts/capture_run_provenance.py"
+        --project-dir "$PROJECT_DIR"
+        --engine "matrix"
+        --suite "matrix"
+        --output-dir "$output_root"
+        --output-file "$output_root/matrix-run-provenance.json"
+        --runner-script "$PROJECT_DIR/scripts/run-benchmark-matrix.sh"
+        --runner-cwd "$(pwd)"
+        --python-executable "$(command -v python3)"
+        --runtime-option "engines=$ENABLED_ENGINES"
+        --runtime-option "suites=$ENABLED_SUITES"
+        --runtime-option "generate_report=$GENERATE_REPORT"
+        --runtime-option "generate_compare_report=$GENERATE_COMPARE_REPORT"
+        --runtime-option "fail_fast=$FAIL_FAST"
+        --runtime-option "keep_running=$KEEP_RUNNING"
+        --runtime-option "output_root=$output_root"
+    )
+    local arg
+    for arg in "${RUN_BENCHMARK_MATRIX_INVOCATION[@]}"; do
+        cmd+=(--runner-argv "$arg")
+    done
+    "${cmd[@]}" >/dev/null
+}
+
 show_help() {
     cat << EOF
 Run Benchmarks Across All Native Engines
@@ -52,7 +80,7 @@ Run Benchmarks Across All Native Engines
 Usage: $0 [OPTIONS]
 
 Options:
-  --engines=LIST     Comma-separated engine list (default: firebird,mysql,postgresql)
+  --engines=LIST     Comma-separated engine list (default: firebird,mysql,postgresql,scratchbird)
   --suites=LIST      Comma-separated suite list (default: regression,stress,acid,performance,tpc-c,tpc-h,engine-differential,index-comparison)
   --output=DIR       Output root directory (default: results/matrix-YYYYMMDD-HHMMSS)
                      Can also be set with BENCHMARK_MATRIX_OUTPUT.
@@ -91,7 +119,7 @@ validate_suite() {
 VALID_ENGINES=()
 VALID_SUITES=()
 
-ENABLED_ENGINES="${BENCHMARK_ENGINES:-firebird,mysql,postgresql}"
+ENABLED_ENGINES="${BENCHMARK_ENGINES:-firebird,mysql,postgresql,scratchbird}"
 ENABLED_SUITES="${BENCHMARK_SUITES:-regression,stress,acid,performance,tpc-c,tpc-h,engine-differential,index-comparison}"
 OUTPUT_ROOT="${BENCHMARK_MATRIX_OUTPUT:-$PROJECT_DIR/results/matrix-$RUN_ID}"
 GENERATE_REPORT=false
@@ -158,6 +186,7 @@ fi
 require_python
 
 mkdir -p "$OUTPUT_ROOT"
+capture_matrix_provenance "$OUTPUT_ROOT"
 
 REPORT_ARGS=()
 if [ "$GENERATE_REPORT" = true ]; then

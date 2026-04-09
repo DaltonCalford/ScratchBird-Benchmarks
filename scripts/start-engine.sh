@@ -10,6 +10,8 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+SCRATCHBIRD_ROOT="${SCRATCHBIRD_ROOT:-$(cd "$PROJECT_DIR/.." && pwd)/ScratchBird}"
+SCRATCHBIRD_EXAMPLE_MANAGER="${SCRATCHBIRD_EXAMPLE_MANAGER:-$SCRATCHBIRD_ROOT/scripts/example_db_manager.sh}"
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -73,6 +75,7 @@ Engines:
   firebird    FirebirdSQL 5.0.1 (port 3050)
   mysql       MySQL 8.4 (port 3306)
   postgresql  PostgreSQL 16 (port 5432)
+  scratchbird ScratchBird Beta 1 native server (default port 17092)
 
 Commands:
   start       Start the engine (default)
@@ -113,6 +116,141 @@ check_docker() {
     fi
 }
 
+scratchbird_env_file() {
+    echo "$PROJECT_DIR/.benchmark-engine-ports/scratchbird.env"
+}
+
+scratchbird_native_port() {
+    echo "${BENCHMARK_SCRATCHBIRD_PORT:-17092}"
+}
+
+scratchbird_pg_port() {
+    echo "${BENCHMARK_SCRATCHBIRD_PG_PORT:-17432}"
+}
+
+scratchbird_mysql_port() {
+    echo "${BENCHMARK_SCRATCHBIRD_MYSQL_PORT:-17306}"
+}
+
+scratchbird_fb_port() {
+    echo "${BENCHMARK_SCRATCHBIRD_FB_PORT:-17050}"
+}
+
+scratchbird_root_dir() {
+    local env_file
+    env_file="$(scratchbird_env_file)"
+    if [ -f "$env_file" ]; then
+        # shellcheck disable=SC1090
+        . "$env_file"
+    fi
+    echo "${BENCHMARK_SCRATCHBIRD_ROOT:-${BENCHMARK_SCRATCHBIRD_ROOT_DIR:-/tmp/sb-benchmark-scratchbird}}"
+}
+
+scratchbird_pid_file() {
+    local root_dir
+    root_dir="$(scratchbird_root_dir)"
+    echo "$root_dir/control/sb_server.pid"
+}
+
+scratchbird_is_running() {
+    local pid_file
+    pid_file="$(scratchbird_pid_file)"
+    if [ ! -f "$pid_file" ]; then
+        return 1
+    fi
+
+    local pid
+    pid="$(cat "$pid_file" 2>/dev/null || true)"
+    if [ -z "$pid" ]; then
+        return 1
+    fi
+
+    kill -0 "$pid" 2>/dev/null
+}
+
+write_scratchbird_env_file() {
+    local root_dir="$1"
+    local runtime_env="$root_dir/profiles/runtime.env"
+    local auth_env="$root_dir/profiles/auth_defaults.env"
+    local port_file
+    local host_value="${BENCHMARK_SCRATCHBIRD_HOST:-127.0.0.1}"
+    local port_value
+    local pg_port_value
+    local mysql_port_value
+    local fb_port_value
+    local db_value="${BENCHMARK_SCRATCHBIRD_DB:-main}"
+    local user_value="${BENCHMARK_SCRATCHBIRD_USER:-SysArch}"
+    local password_value="${BENCHMARK_SCRATCHBIRD_PASSWORD:-replaceme}"
+    port_file="$(scratchbird_env_file)"
+    port_value="$(scratchbird_native_port)"
+    pg_port_value="$(scratchbird_pg_port)"
+    mysql_port_value="$(scratchbird_mysql_port)"
+    fb_port_value="$(scratchbird_fb_port)"
+
+    if [ -f "$runtime_env" ]; then
+        # shellcheck disable=SC1090
+        . "$runtime_env"
+        host_value="${SCRATCHBIRD_NATIVE_HOST:-$host_value}"
+        port_value="${SCRATCHBIRD_NATIVE_PORT:-$port_value}"
+        db_value="${SCRATCHBIRD_NATIVE_DB:-$db_value}"
+        user_value="${SCRATCHBIRD_NATIVE_USER:-$user_value}"
+        password_value="${SCRATCHBIRD_NATIVE_PASSWORD:-$password_value}"
+    fi
+
+    if [ -f "$auth_env" ]; then
+        # shellcheck disable=SC1090
+        . "$auth_env"
+        user_value="${ADMIN_USER:-$user_value}"
+        password_value="${ADMIN_PASSWORD:-$password_value}"
+    fi
+
+    mkdir -p "$PROJECT_DIR/.benchmark-engine-ports"
+    {
+        echo "BENCHMARK_SCRATCHBIRD_ROOT=$root_dir"
+        echo "BENCHMARK_SCRATCHBIRD_RUNTIME_ENV=$runtime_env"
+        echo "BENCHMARK_SCRATCHBIRD_HOST=${host_value}"
+        echo "BENCHMARK_SCRATCHBIRD_PORT=${port_value}"
+        echo "BENCHMARK_SCRATCHBIRD_PG_PORT=${pg_port_value}"
+        echo "BENCHMARK_SCRATCHBIRD_MYSQL_PORT=${mysql_port_value}"
+        echo "BENCHMARK_SCRATCHBIRD_FB_PORT=${fb_port_value}"
+        echo "BENCHMARK_SCRATCHBIRD_DB=${db_value}"
+        echo "BENCHMARK_SCRATCHBIRD_USER=${user_value}"
+        echo "BENCHMARK_SCRATCHBIRD_PASSWORD=${password_value}"
+    } > "$port_file"
+}
+
+start_scratchbird_engine() {
+    local root_dir="${BENCHMARK_SCRATCHBIRD_ROOT:-/tmp/sb-benchmark-scratchbird}"
+
+    if [ ! -x "$SCRATCHBIRD_EXAMPLE_MANAGER" ]; then
+        log_error "ScratchBird example manager not found: $SCRATCHBIRD_EXAMPLE_MANAGER"
+        return 1
+    fi
+
+    stop_all_engines
+    rm -rf "$root_dir"
+    export SCRATCHBIRD_EXAMPLE_DYNAMIC_ROOT="$root_dir"
+    export SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE="${SCRATCHBIRD_EXAMPLE_IMPORT_BUNDLE:-0}"
+    export SCRATCHBIRD_EXAMPLE_DYNAMIC_NATIVE_PORT="$(scratchbird_native_port)"
+    export SCRATCHBIRD_EXAMPLE_DYNAMIC_PG_PORT="$(scratchbird_pg_port)"
+    export SCRATCHBIRD_EXAMPLE_DYNAMIC_MYSQL_PORT="$(scratchbird_mysql_port)"
+    export SCRATCHBIRD_EXAMPLE_DYNAMIC_FB_PORT="$(scratchbird_fb_port)"
+    export SCRATCHBIRD_EXAMPLE_PARSER_ENGINE_RESPONSE_TIMEOUT_MS="${SCRATCHBIRD_EXAMPLE_PARSER_ENGINE_RESPONSE_TIMEOUT_MS:-300000}"
+
+    log_section "Starting scratchbird"
+    if ! "$SCRATCHBIRD_EXAMPLE_MANAGER" dynamic-setup; then
+        if ! scratchbird_is_running; then
+            log_error "ScratchBird example manager failed to start a runnable runtime"
+            return 1
+        fi
+        log_warn "ScratchBird example manager returned non-zero after bringing the runtime up; continuing with live runtime detection"
+    fi
+    write_scratchbird_env_file "$root_dir"
+    log_success "ScratchBird started from $root_dir"
+    show_engine_status "scratchbird"
+    show_engine_connect "scratchbird"
+}
+
 stop_all_engines() {
     # Stop any other running benchmark engines to ensure isolation
     local container_name
@@ -122,11 +260,31 @@ stop_all_engines() {
             docker stop "$container_name" &> /dev/null || true
         fi
     done
+    if scratchbird_is_running; then
+        log_info "Stopping scratchbird for isolation..."
+        stop_engine "scratchbird"
+    fi
 }
 
 stop_engine() {
     local engine="$1"
     local container="sb-benchmark-$engine"
+
+    if [ "$engine" = "scratchbird" ]; then
+        local root_dir
+        root_dir="$(scratchbird_root_dir)"
+        if [ -x "$SCRATCHBIRD_EXAMPLE_MANAGER" ]; then
+            export SCRATCHBIRD_EXAMPLE_DYNAMIC_ROOT="$root_dir"
+            "$SCRATCHBIRD_EXAMPLE_MANAGER" dynamic-teardown >/dev/null 2>&1 || true
+        fi
+        rm -f "$(scratchbird_env_file)"
+        if scratchbird_is_running; then
+            log_warn "ScratchBird teardown did not fully stop the server"
+            return 1
+        fi
+        log_success "scratchbird stopped"
+        return 0
+    fi
     
     if docker ps | grep -q "$container"; then
         log_info "Stopping $engine..."
@@ -148,6 +306,11 @@ write_engine_port_file() {
 
 build_engine() {
     local engine="$1"
+
+    if [ "$engine" = "scratchbird" ]; then
+        log_info "ScratchBird uses the sibling workspace build instead of a Docker image"
+        return 0
+    fi
     
     log_section "Building $engine Image"
     
@@ -186,6 +349,11 @@ start_engine() {
     
     # Stop all other engines first (isolation)
     stop_all_engines
+
+    if [ "$engine" = "scratchbird" ]; then
+        start_scratchbird_engine
+        return 0
+    fi
     
     # Check if image exists
     if ! docker images | grep -q "sb-benchmark-$engine"; then
@@ -292,6 +460,26 @@ start_engine() {
 show_engine_status() {
     local engine="$1"
     local container="sb-benchmark-$engine"
+
+    if [ "$engine" = "scratchbird" ]; then
+        local root_dir
+        local env_file
+        root_dir="$(scratchbird_root_dir)"
+        env_file="$(scratchbird_env_file)"
+        echo ""
+        echo -e "${CYAN}ScratchBird Runtime:${NC}"
+        if scratchbird_is_running; then
+            echo "scratchbird running from $root_dir"
+        else
+            echo "scratchbird stopped"
+        fi
+        if [ -f "$env_file" ]; then
+            echo ""
+            echo -e "${CYAN}Connection Variables:${NC}"
+            cat "$env_file"
+        fi
+        return 0
+    fi
     
     echo ""
     echo -e "${CYAN}Container Status:${NC}"
@@ -309,6 +497,13 @@ get_engine_host_port() {
         firebird) echo "${BENCHMARK_FIREBIRD_PORT:-3050}" ;;
         mysql) echo "${BENCHMARK_MYSQL_PORT:-3306}" ;;
         postgresql) echo "${BENCHMARK_POSTGRESQL_PORT:-5432}" ;;
+        scratchbird)
+            if [ -f "$(scratchbird_env_file)" ]; then
+                # shellcheck disable=SC1090
+                . "$(scratchbird_env_file)"
+            fi
+            echo "$(scratchbird_native_port)"
+            ;;
     esac
 }
 
@@ -372,12 +567,46 @@ PostgreSQL 16:
     export PGPASSWORD=benchmark
 EOF
             ;;
+        scratchbird)
+            if [ -f "$(scratchbird_env_file)" ]; then
+                # shellcheck disable=SC1090
+                . "$(scratchbird_env_file)"
+            fi
+            cat << EOF
+ScratchBird Beta 1 Native:
+  Host:     ${BENCHMARK_SCRATCHBIRD_HOST:-127.0.0.1}:$(get_engine_host_port scratchbird)
+  Database: ${BENCHMARK_SCRATCHBIRD_DB:-main}
+  User:     ${BENCHMARK_SCRATCHBIRD_USER:-bootstrap_admin}
+  Password: ${BENCHMARK_SCRATCHBIRD_PASSWORD:-SbExampleBootstrap_2026!}
+
+  Environment for tests:
+    export SCRATCHBIRD_HOST=${BENCHMARK_SCRATCHBIRD_HOST:-127.0.0.1}
+    export SCRATCHBIRD_PORT=$(get_engine_host_port scratchbird)
+    export SCRATCHBIRD_DATABASE=${BENCHMARK_SCRATCHBIRD_DB:-main}
+    export SCRATCHBIRD_USER=${BENCHMARK_SCRATCHBIRD_USER:-bootstrap_admin}
+    export SCRATCHBIRD_PASSWORD=${BENCHMARK_SCRATCHBIRD_PASSWORD:-SbExampleBootstrap_2026!}
+    export SCRATCHBIRD_ROOT=$(scratchbird_root_dir)
+EOF
+            ;;
     esac
 }
 
 show_logs() {
     local engine="$1"
     local container="sb-benchmark-$engine"
+
+    if [ "$engine" = "scratchbird" ]; then
+        local root_dir
+        root_dir="$(scratchbird_root_dir)"
+        local server_log="$root_dir/logs/sb_server.log"
+        if [ ! -f "$server_log" ]; then
+            log_error "ScratchBird server log not found: $server_log"
+            return 1
+        fi
+        log_info "Showing logs for scratchbird (Ctrl+C to exit)..."
+        tail -f "$server_log"
+        return 0
+    fi
     
     if ! docker ps -a | grep -q "$container"; then
         log_error "$engine container not found"
@@ -391,8 +620,12 @@ show_logs() {
 clean_engine() {
     local engine="$1"
     local container="sb-benchmark-$engine"
-    
+
     stop_engine "$engine"
+
+    if [ "$engine" = "scratchbird" ]; then
+        return 0
+    fi
     
     if docker ps -a | grep -q "$container"; then
         log_info "Removing $container..."
@@ -412,17 +645,19 @@ fi
 
 # Validate engine
 case "$ENGINE" in
-    firebird|mysql|postgresql)
+    firebird|mysql|postgresql|scratchbird)
         ;;
     *)
         log_error "Unknown engine: $ENGINE"
-        echo "Valid engines: firebird, mysql, postgresql"
+        echo "Valid engines: firebird, mysql, postgresql, scratchbird"
         exit 1
         ;;
 esac
 
 # Validate and execute command
-check_docker
+if [ "$ENGINE" != "scratchbird" ]; then
+    check_docker
+fi
 
 case "$COMMAND" in
     start|up)

@@ -8,6 +8,7 @@ between Firebird, MySQL, PostgreSQL, and ScratchBird.
 
 import argparse
 import json
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,12 @@ from typing import Dict, List, Optional
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from benchmark_provenance import validate_scratchbird_result_provenance
 
 
 @dataclass
@@ -31,6 +38,7 @@ class StressResult:
 def load_results(file_path: Path) -> Optional[StressResult]:
     """Load results from JSON file."""
     try:
+        validate_scratchbird_result_provenance(file_path)
         data = json.loads(file_path.read_text())
         return StressResult(
             engine=data['metadata']['engine'],

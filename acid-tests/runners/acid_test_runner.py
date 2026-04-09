@@ -17,7 +17,12 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent.parent))
+if "scratchbird" not in sys.modules:
+    scratchbird_driver = PROJECT_ROOT.parent / "ScratchBird-driver" / "tracks" / "p3" / "drivers" / "python" / "src"
+    if scratchbird_driver.exists():
+        sys.path.insert(0, str(scratchbird_driver))
 
 from scenarios.transaction_tests import get_all_tests, TransactionTest
 
@@ -72,6 +77,22 @@ class DatabaseConnection:
                 user=self.user, password=self.password
             )
             self.connection.autocommit = False
+        elif self.engine == "scratchbird":
+            import scratchbird
+            self.connection = scratchbird.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                protocol="native",
+                front_door_mode="direct",
+                sslmode="disable",
+            )
+            self.connection.autocommit = False
+            leak_detector = getattr(self.connection, "_leak_detector", None)
+            if leak_detector is not None and hasattr(leak_detector, "config"):
+                leak_detector.config.threshold = max(float(leak_detector.config.threshold), 1800.0)
         else:
             raise ValueError(f"Unsupported engine: {self.engine}")
         self.cursor = self.connection.cursor()
@@ -241,6 +262,7 @@ class ACIDTestRunner:
                 "firebird": "SELECT TRIM(RDB$GET_CONTEXT('SYSTEM', 'ISOLATION_LEVEL')) FROM RDB$DATABASE",
                 "mysql": "SELECT @@transaction_isolation",
                 "postgresql": "SHOW default_transaction_isolation",
+                "scratchbird": "SHOW TRANSACTION ISOLATION LEVEL",
             }[self.engine]
         return test.verification_sql
 
@@ -459,7 +481,7 @@ class ACIDTestRunner:
 
 def main():
     parser = argparse.ArgumentParser(description='ACID Compliance Test Runner')
-    parser.add_argument('--engine', required=True, choices=['firebird', 'mysql', 'postgresql'])
+    parser.add_argument('--engine', required=True, choices=['firebird', 'mysql', 'postgresql', 'scratchbird'])
     parser.add_argument('--host', default='localhost')
     parser.add_argument('--port', type=int)
     parser.add_argument('--database', default='benchmark')

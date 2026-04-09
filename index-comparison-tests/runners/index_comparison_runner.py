@@ -28,6 +28,8 @@ def load_json(path: Path) -> Dict[str, Any]:
 
 
 def make_target_default(engine: str) -> str:
+    if engine == "scratchbird":
+        return "scratchbird-native"
     return f"upstream-{engine}"
 
 
@@ -97,7 +99,7 @@ def to_report_test(result: Dict[str, Any]) -> Dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Index comparison benchmark runner")
-    parser.add_argument("--engine", required=True, choices=["firebird", "mysql", "postgresql"])
+    parser.add_argument("--engine", required=True, choices=["firebird", "mysql", "postgresql", "scratchbird"])
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int)
     parser.add_argument("--database", required=True)
@@ -112,7 +114,7 @@ def main() -> int:
     capability_registry = load_json(SUITE_ROOT / "registry" / "engine_capabilities.json")["engines"]
 
     if args.port is None:
-        args.port = {"firebird": 3050, "mysql": 3306, "postgresql": 5432}[args.engine]
+        args.port = {"firebird": 3050, "mysql": 3306, "postgresql": 5432, "scratchbird": 17092}[args.engine]
 
     target_name = args.target or make_target_default(args.engine)
     target_entry = target_registry.get(target_name)
@@ -167,14 +169,13 @@ def main() -> int:
 
             adapter.drop_table(scenario.table_name)
             adapter.execute(scenario.create_table_sql)
-            for statement in scenario.create_index_sql:
-                adapter.execute(statement)
-            adapter.commit()
             insert_rows = phase1_insert_rows(scenario.scenario_id)
             adapter.execute_many(
                 adapter.insert_statement(scenario.table_name, len(insert_rows[0])),
                 insert_rows
             )
+            for statement in scenario.create_index_sql:
+                adapter.execute(statement)
             adapter.commit()
             adapter.refresh_planner_statistics(scenario.table_name)
 

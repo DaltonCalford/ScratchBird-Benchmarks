@@ -22,7 +22,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).parent.parent))
+scratchbird_driver = PROJECT_ROOT.parent / "ScratchBird-driver" / "tracks" / "p3" / "drivers" / "python" / "src"
+if scratchbird_driver.exists():
+    sys.path.insert(0, str(scratchbird_driver))
 
 from scenarios.mysql_optimized_tests import get_all_tests as get_mysql_tests
 from scenarios.postgresql_optimized_tests import get_all_tests as get_pg_tests
@@ -86,6 +90,22 @@ class EngineConnection:
                 connect_kwargs["options"] = f"-c statement_timeout={self._query_timeout_ms}"
             self.connection = psycopg2.connect(**connect_kwargs)
             self.connection.autocommit = False
+        elif self.engine == "scratchbird":
+            import scratchbird
+            self.connection = scratchbird.connect(
+                host=self.host,
+                port=self.port,
+                database=self.database,
+                user=self.user,
+                password=self.password,
+                protocol="native",
+                front_door_mode="direct",
+                sslmode="disable",
+            )
+            self.connection.autocommit = False
+            leak_detector = getattr(self.connection, "_leak_detector", None)
+            if leak_detector is not None and hasattr(leak_detector, "config"):
+                leak_detector.config.threshold = max(float(leak_detector.config.threshold), 1800.0)
         else:
             raise ValueError(f"Unsupported engine: {self.engine}")
         self.cursor = self.connection.cursor()
@@ -186,7 +206,8 @@ class DifferentialTestRunner:
                 pattern_map = {
                     "firebird": test.expected_fb_pattern,
                     "mysql": test.expected_mysql_pattern,
-                    "postgresql": test.expected_pg_pattern
+                    "postgresql": test.expected_pg_pattern,
+                    "scratchbird": "ScratchBird native candidate"
                 }
                 actual_pattern = pattern_map.get(self.engine, "Unknown")
                 
@@ -243,7 +264,8 @@ class DifferentialTestRunner:
                 pattern_map = {
                     "firebird": test.expected_fb_pattern,
                     "mysql": test.expected_mysql_pattern,
-                    "postgresql": test.expected_pg_pattern
+                    "postgresql": test.expected_pg_pattern,
+                    "scratchbird": "ScratchBird native candidate"
                 }
                 actual_pattern = pattern_map.get(self.engine, "Unknown")
                 
@@ -301,7 +323,8 @@ class DifferentialTestRunner:
                 pattern_map = {
                     "firebird": test.expected_fb_pattern,
                     "mysql": test.expected_mysql_pattern,
-                    "postgresql": test.expected_pg_pattern
+                    "postgresql": test.expected_pg_pattern,
+                    "scratchbird": "ScratchBird native candidate"
                 }
                 actual_pattern = pattern_map.get(self.engine, "Unknown")
                 
@@ -381,7 +404,7 @@ class DifferentialTestRunner:
 
 def main():
     parser = argparse.ArgumentParser(description='Engine Differential Test Runner')
-    parser.add_argument('--engine', required=True, choices=['firebird', 'mysql', 'postgresql'])
+    parser.add_argument('--engine', required=True, choices=['firebird', 'mysql', 'postgresql', 'scratchbird'])
     parser.add_argument('--host', default='localhost')
     parser.add_argument('--port', type=int)
     parser.add_argument('--database', default='benchmark')

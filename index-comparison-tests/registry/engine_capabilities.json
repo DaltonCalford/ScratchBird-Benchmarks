@@ -58,7 +58,22 @@
         "mode": "explain_json",
         "supports_structured_json": true
       }
+    },
+    "scratchbird": {
+      "runtime_service": "scratchbird",
+      "supported_index_families": [
+        "btree"
+      ],
+      "supported_workload_families": [
+        "point_lookup",
+        "range_scan",
+        "composite_predicate",
+        "order_preserving_scan"
+      ],
+      "plan_capture": {
+        "mode": "explain_json",
+        "supports_structured_json": true
+      }
     }
   }
 }
-
